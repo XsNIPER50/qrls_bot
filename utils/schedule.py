@@ -1,43 +1,43 @@
 # utils/schedule.py
 
 SCHEDULE = {
-    1: [("Cyclones", "Elite Ink"), ("Mustangs", "Clarity"), ("Hammer Heads", "Spectres"),
-        ("Rangers", "Astro"), ("Speed Demons", "Arctic Assassins"), ("Kings", "Armada"),
-        ("Vibe Clan", "Sappers"), ("Three Rocketeers", "Bleacher Boys")],
+    1: [("Arctic Assassins" "Clarity United"), ("Spectres", "Astro"), ("Armada", "Elite Ink"), 
+        ("Sappers", "Cyclones"), ("Mustangs", "Rangers"), ("Three Rocketeers", "Vibe Clan"), 
+        ("Kings", "Speed Demons"), ("Bleacher Boys", "Hammerheads")],
 
-    2: [("Bleacher Boys", "Clarity"), ("Vibe Clan", "Elite Ink"), ("Speed Demons", "Mustangs"),
-        ("Rangers", "Spectres"), ("Kings", "Hammer Heads"), ("Three Rocketeers", "Cyclones"),
-        ("Sappers", "Astro"), ("Arctic Assassins", "Armada")],
+    2: [("Bleacher Boys" "Clarity United"), ("Kings", "Vibe Clan"), ("Hammerheads", "Three Rocketeers"), 
+        ("Arctic Assassins", "Speed Demons"), ("Rangers", "Sappers"), ("Spectres", "Elite Ink"), 
+        ("Armada", "Astro"), ("Mustangs", "Cyclones")],
 
-    3: [("Cyclones", "Hammer Heads"), ("Spectres", "Kings"), ("Clarity", "Astro"),
-        ("Mustangs", "Rangers"), ("Vibe Clan", "Bleacher Boys"), ("Sappers", "Arctic Assassins"),
-        ("Armada", "Elite Ink"), ("Three Rocketeers", "Speed Demons")],
+    3: [("Armada" "Clarity United"), ("Cyclones", "Kings"), ("Mustangs", "Vibe Clan"), 
+        ("Astro", "Bleacher Boys"), ("Sappers", "Hammerheads"), ("Spectres", "Speed Demons"), 
+        ("Elite Ink", "Arctic Assassins"), ("Rangers", "Three Rocketeers")],
 
-    4: [("Elite Ink", "Spectres"), ("Rangers", "Hammer Heads"), ("Astro", "Cyclones"),
-        ("Mustangs", "Kings"), ("Vibe Clan", "Clarity"), ("Sappers", "Bleacher Boys"),
-        ("Arctic Assassins", "Three Rocketeers"), ("Speed Demons", "Armada")],
+    4: [("Bleacher Boys" "Kings"), ("Clarity United", "Vibe Clan"), ("Hammerheads", "Arctic Assassins"), 
+        ("Three Rocketeers", "Speed Demons"), ("Rangers", "Spectres"), ("Sappers", "Elite Ink"), 
+        ("Armada", "Mustangs"), ("Astro", "Cyclones")],
 
-    5: [("Bleacher Boys", "Kings"), ("Mustangs", "Elite Ink"), ("Cyclones", "Sappers"),
-        ("Clarity", "Spectres"), ("Hammer Heads", "Vibe Clan"), ("Three Rocketeers", "Rangers"),
-        ("Arctic Assassins", "Astro"), ("Speed Demons", "Armada")],
+    5: [("Clarity United" "Kings"), ("Vibe Clan", "Bleacher Boys"), ("Hammerheads", "Speed Demons"), 
+        ("Three Rocketeers", "Arctic Assassins"), ("Rangers", "Elite Ink"), ("Sappers", "Spectres"), 
+        ("Armada", "Cyclones"), ("Astro", "Mustangs")],
 
-    6: [("Armada", "Spectres"), ("Astro", "Elite Ink"), ("Rangers", "Kings"),
-        ("Vibe Clan", "Mustangs"), ("Cyclones", "Three Rocketeers"), ("Clarity", "Sappers"),
-        ("Arctic Assassins", "Speed Demons"), ("Bleacher Boys", "Hammer Heads")],
+    6: [("Bleacher Boys" "Sappers"), ("Clarity United", "Spectres"), ("Elite Ink", "Kings"), 
+        ("Rangers", "Vibe Clan"), ("Cyclones", "Three Rocketeers"), ("Astro", "Hammerheads"), 
+        ("Speed Demons", "Mustangs"), ("Arctic Assassins", "Armada")],
 
-    7: [("Hammer Heads", "Mustangs"), ("Kings", "Vibe Clan"), ("Cyclones", "Clarity"),
-        ("Bleacher Boys", "Elite Ink"), ("Three Rocketeers", "Spectres"), ("Astro", "Armada"),
-        ("Sappers", "Speed Demons"), ("Arctic Assassins", "Rangers")],
+    7: [("Bleacher Boys" "Kings"), ("Clarity United", "Vibe Clan"), ("Hammerheads", "Arctic Assassins"), 
+        ("Three Rocketeers", "Speed Demons"), ("Rangers", "Spectres"), ("Sappers", "Elite Ink"), 
+        ("Armada", "Mustangs"), ("Astro", "Cyclones")],
 
-    8: [("Armada", "Hammer Heads"), ("Elite Ink", "Spectres"), ("Clarity", "Rangers"),
-        ("Mustangs", "Astro"), ("Cyclones", "Bleacher Boys"), ("Vibe Clan", "Arctic Assassins"),
-        ("Kings", "Speed Demons"), ("Three Rocketeers", "Sappers")],
+    8: [("Clarity United" "Kings"), ("Vibe Clan", "Bleacher Boys"), ("Hammerheads", "Speed Demons"), 
+        ("Three Rocketeers", "Arctic Assassins"), ("Rangers", "Elite Ink"), ("Sappers", "Spectres"), 
+        ("Armada", "Cyclones"), ("Astro", "Mustangs")],
 
-    9: [("Spectres", "Bleacher Boys"), ("Kings", "Vibe Clan"), ("Armada", "Elite Ink"),
-        ("Astro", "Cyclones"), ("Mustangs", "Sappers"), ("Hammer Heads", "Arctic Assassins"),
-        ("Three Rocketeers", "Speed Demons"), ("Clarity", "Rangers")],
+    9: [("Three Rocketeers" "Bleacher Boys"), ("Clarity United", "Speed Demons"), 
+        ("Sappers", "Mustangs"), ("Astro", "Elite Ink"), ("Hammerheads", "Kings"), 
+        ("Vibe Clan", "Arctic Assassins"), ("Spectres", "Armada"), ("Cyclones", "Rangers")],
 
-    10: [("Sappers", "Bleacher Boys"), ("Armada", "Cyclones"), ("Astro", "Kings"),
-         ("Elite Ink", "Mustangs"), ("Spectres", "Vibe Clan"), ("Rangers", "Hammer Heads"),
-         ("Arctic Assassins", "Clarity"), ("Three Rocketeers", "Speed Demons")]
+    10: [("Bleacher Boys" "Clarity United"), ("Kings", "Vibe Clan"), ("Hammerheads", "Three Rocketeers"), 
+         ("Arctic Assassins", "Speed Demons"), ("Rangers", "Sappers"), ("Spectres", "Elite Ink"), 
+         ("Armada", "Astro"), ("Mustangs", "Cyclones")]
 }

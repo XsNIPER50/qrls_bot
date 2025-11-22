@@ -153,15 +153,19 @@ class Confirm(commands.Cog):
         sched_channel = discord.utils.get(interaction.guild.text_channels, name=SCHED_RESULTS_CHANNEL)
         scheduled_matches_channel = discord.utils.get(interaction.guild.text_channels, name=SCHEDULED_MATCHES_CHANNEL)
 
+        # Get correct role mentions
         role_a = discord.utils.get(interaction.guild.roles, name=team_a)
         role_b = discord.utils.get(interaction.guild.roles, name=team_b)
-        team_a_mention = role_a.mention if role_a else team_a
-        team_b_mention = role_b.mention if role_b else team_b
+        team_a_mention = role_a.mention if role_a else f"@{team_a}"
+        team_b_mention = role_b.mention if role_b else f"@{team_b}"
 
+        # Get emoji from TEAM_INFO
         emoji_a_name = TEAM_INFO.get(team_a, {}).get("emoji", "")
         emoji_b_name = TEAM_INFO.get(team_b, {}).get("emoji", "")
+
         emoji_a_obj = discord.utils.get(interaction.guild.emojis, name=emoji_a_name)
         emoji_b_obj = discord.utils.get(interaction.guild.emojis, name=emoji_b_name)
+
         emoji_a_str = str(emoji_a_obj) if emoji_a_obj else f":{emoji_a_name}:"
         emoji_b_str = str(emoji_b_obj) if emoji_b_obj else f":{emoji_b_name}:"
 
