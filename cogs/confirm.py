@@ -111,10 +111,20 @@ class Confirm(commands.Cog):
         proposer = interaction.guild.get_member(proposer_id)
         proposer_mention = proposer.mention if proposer else f"<@{proposer_id}>"
 
-        # --- Extract team names from channel name ---
+        # --- Extract rough team names from channel and map to real TEAM_INFO keys ---
         parts = interaction.channel.name.split("-vs-")
-        team_a = parts[0].split("-", 1)[-1].replace("-", " ").title() if len(parts) >= 1 else "Team A"
-        team_b = parts[1].replace("-", " ").title() if len(parts) >= 2 else "Team B"
+        raw_a = parts[0].split("-", 1)[-1].replace("-", " ").title()
+        raw_b = parts[1].replace("-", " ").title()
+
+        def resolve_team_name(raw):
+            """Return the correct TEAM_INFO key based on fuzzy match."""
+            for key in TEAM_INFO.keys():
+                if raw.lower() in key.lower():
+                    return key
+            return raw  # fallback
+
+        team_a = resolve_team_name(raw_a)
+        team_b = resolve_team_name(raw_b)
 
         # --- Determine confirmer's role (Admin or Captain) ---
         if interaction.user.guild_permissions.administrator:
