@@ -23,8 +23,10 @@ SERVICE_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
 SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 WORKSHEET_NAME = os.getenv("GOOGLE_WORKSHEET", "").strip()
 
+# 🔔 New: changelog channel ID
+CHANGELOG_CHANNEL_ID = int(os.getenv("CHANGELOG_CHANNEL_ID", 0))
+
 CSV_FILE = "data/salaries.csv"
-# ✅ Added the new 'captain' column
 REQUIRED_HEADERS = ["discord_id", "nickname", "salary", "team", "captain"]
 
 SCOPES = [
@@ -51,31 +53,12 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 
-def _to_bool_string(val) -> str:
-    """
-    Normalize sheet values to 'True' or 'False' strings for the CSV.
-    Accepts: true/false, yes/no, y/n, 1/0 (any case/whitespace).
-    """
-    if val is None:
-        return "False"
-    s = str(val).strip().lower()
-    if s in {"true", "yes", "y", "1"}:
-        return "True"
-    if s in {"false", "no", "n", "0"}:
-        return "False"
-    return "False"
-
-
 def normalize_row(row: dict) -> dict:
-    """Normalize types and whitespace; safely handle numeric salary values and captain values."""
+    """Normalize types and whitespace; safely handle numeric salary values."""
     out = {}
     for k in REQUIRED_HEADERS:
         val = row.get(k, "")
         # Convert numbers to strings and strip safely
-        if k == "captain":
-            out[k] = _to_bool_string(val)
-            continue
-
         if isinstance(val, (int, float)):
             val = str(val)
         elif val is None:
@@ -90,12 +73,29 @@ def normalize_row(row: dict) -> dict:
     except Exception:
         out["salary"] = out["salary"] or "0"
 
+    # captain stays as-is (e.g., "TRUE"/"FALSE" from sheet)
     return out
 
 
 class Refresh(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    async def _log_to_changelog(self, interaction: Interaction, msg: str):
+        """Send a log message to the configured changelog channel, if set."""
+        if not CHANGELOG_CHANNEL_ID:
+            return  # no channel configured
+
+        # Try to get the channel from the bot cache
+        channel = self.bot.get_channel(CHANGELOG_CHANNEL_ID)
+        if channel is None and interaction.guild is not None:
+            channel = interaction.guild.get_channel(CHANGELOG_CHANNEL_ID)
+
+        if channel is None:
+            return
+
+        # Post the same message plus who ran it
+        await channel.send(f"🧾 `/refresh` by {interaction.user.mention}:\n{msg}")
 
     @app_commands.command(
         name="refresh",
@@ -137,11 +137,11 @@ class Refresh(commands.Cog):
             missing = [h for h in REQUIRED_HEADERS if h not in sheet_headers]
             extra = [h for h in sheet_headers if h not in REQUIRED_HEADERS]
             if missing:
-                await interaction.followup.send(
+                msg = (
                     f"❌ Missing required columns in sheet: {', '.join(missing)}\n"
-                    f"Expected headers: {', '.join(REQUIRED_HEADERS)}",
-                    ephemeral=True
+                    f"Expected headers: {', '.join(REQUIRED_HEADERS)}"
                 )
+                await interaction.followup.send(msg, ephemeral=True)
                 return
 
             # Normalize
@@ -149,15 +149,14 @@ class Refresh(commands.Cog):
 
             # Dry run
             if dry_run:
-                captain_count = sum(1 for r in normalized if r.get("captain") == "True")
-                await interaction.followup.send(
+                msg = (
                     "🔎 **Dry run** complete.\n"
                     f"• Rows found: **{len(normalized)}**\n"
                     f"• Required headers OK ✅\n"
-                    + (f"• Extra columns (ignored): {', '.join(extra)}\n" if extra else "• No extra columns.\n")
-                    + f"• Captain = True count: **{captain_count}**",
-                    ephemeral=True
+                    + (f"• Extra columns (ignored): {', '.join(extra)}" if extra else "• No extra columns.")
                 )
+                await interaction.followup.send(msg, ephemeral=True)
+                await self._log_to_changelog(interaction, msg)
                 return
 
             # Write CSV
@@ -167,10 +166,9 @@ class Refresh(commands.Cog):
                 writer.writeheader()
                 writer.writerows(normalized)
 
-            await interaction.followup.send(
-                f"✅ Refreshed **{CSV_FILE}** with **{len(normalized)}** rows.",
-                ephemeral=True
-            )
+            msg = f"✅ Refreshed **{CSV_FILE}** with **{len(normalized)}** rows."
+            await interaction.followup.send(msg, ephemeral=True)
+            await self._log_to_changelog(interaction, msg)
 
         except gspread.exceptions.APIError as e:
             await interaction.followup.send(f"⚠️ Google API error: `{e}`", ephemeral=True)
