@@ -1,16 +1,10 @@
-import os
-import csv
 import discord
-from discord import app_commands
+from discord import app_commands, Interaction
 from discord.ext import commands
-from dotenv import load_dotenv
+import csv
+import os
 from utils.team_info import TEAM_INFO
 from utils.global_cooldown import check_cooldown
-
-# ✅ Load environment variables
-load_dotenv()
-ADMINS_ROLE_ID = int(os.getenv("ADMINS_ROLE_ID", 0))
-CAPTAINS_ROLE_ID = int(os.getenv("CAPTAINS_ROLE_ID", 0))
 
 CSV_FILE = "data/salaries.csv"
 
@@ -18,25 +12,68 @@ DEFAULT_COLOR = 0x7289DA  # Discord blurple
 DEFAULT_LOGO = "https://example.com/logos/default_team.png"  # fallback logo
 
 
+async def team_name_autocomplete(
+    interaction: Interaction,
+    current: str,
+):
+    """
+    Autocomplete callback for the team_name option.
+
+    Shows up to 25 teams from TEAM_INFO whose name contains the typed text.
+    """
+    # Build list of matching team names
+    current_lower = current.lower()
+    choices = []
+
+    for team in TEAM_INFO.keys():
+        if current_lower in team.lower():
+            choices.append(
+                app_commands.Choice(name=team, value=team)
+            )
+        if len(choices) >= 25:  # Discord limit
+            break
+
+    # If user hasn't typed anything yet, just show first 25 teams
+    if not current and not choices:
+        for team in list(TEAM_INFO.keys())[:25]:
+            choices.append(app_commands.Choice(name=team, value=team))
+
+    return choices
+
+
 class TeamInfo(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="teaminfo", description="Display information about a specific team.")
-    @app_commands.describe(team_name="Enter the team's name (case-sensitive to CSV data)")
-    async def teaminfo(self, interaction: discord.Interaction, team_name: str):
+    @app_commands.command(
+        name="teaminfo",
+        description="Display information about a specific team."
+    )
+    @app_commands.describe(team_name="Select a team")
+    @app_commands.autocomplete(team_name=team_name_autocomplete)
+    async def teaminfo(
+        self,
+        interaction: discord.Interaction,
+        team_name: str
+    ):
         if not await check_cooldown(interaction):
             return
 
         # ✅ Ensure salary file exists
         if not os.path.exists(CSV_FILE):
-            await interaction.response.send_message("❌ Salary data file not found.", ephemeral=True)
+            await interaction.response.send_message(
+                "❌ Salary data file not found.",
+                ephemeral=True
+            )
             return
 
         # --- Load team details ---
         team_info = TEAM_INFO.get(team_name, None)
         if not team_info:
-            await interaction.response.send_message(f"❌ No data found for team **{team_name}**.", ephemeral=True)
+            await interaction.response.send_message(
+                f"❌ No data found for team **{team_name}**.",
+                ephemeral=True
+            )
             return
 
         color = team_info.get("color", DEFAULT_COLOR)
@@ -52,7 +89,10 @@ class TeamInfo(commands.Cog):
                     salary = row.get("salary", "0")
                     players.append(f"• **{nickname}** — {salary}")
 
-        players_list = "\n".join(players) if players else "No players currently assigned to this team."
+        if not players:
+            players_list = "No players currently assigned to this team."
+        else:
+            players_list = "\n".join(players)
 
         # --- Build embed ---
         embed = discord.Embed(
