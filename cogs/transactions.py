@@ -45,10 +45,10 @@ class Transaction(commands.Cog):
         description="(Admin) Move a player to a new team and log the transaction."
     )
     @app_commands.describe(
-        discord_id="The player's Discord ID (numbers only).",
-        team="The team name to move them to."
+        member="Pick the player to move.",
+        team="Pick the team role to move them to."
     )
-    async def transaction(self, interaction: Interaction, discord_id: str, team: str):
+    async def transaction(self, interaction: Interaction, member: discord.Member, team: discord.Role):
         # Admin gate
         if not is_admin_user(interaction.user):
             await interaction.response.send_message("🚫 Admins only.", ephemeral=True)
@@ -58,16 +58,6 @@ class Transaction(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=True)
-
-        # Basic validation
-        discord_id = _safe_str(discord_id)
-        new_team = _safe_str(team)
-        if not discord_id.isdigit():
-            await interaction.followup.send("❌ discord_id must be numbers only.", ephemeral=True)
-            return
-        if not new_team:
-            await interaction.followup.send("❌ team cannot be blank.", ephemeral=True)
-            return
 
         if not os.path.exists(CSV_FILE):
             await interaction.followup.send(f"❌ CSV file not found: `{CSV_FILE}`", ephemeral=True)
@@ -86,7 +76,10 @@ class Transaction(commands.Cog):
             )
             return
 
-        # Find player
+        discord_id = str(member.id)
+        new_team_name = team.name
+
+        # Find player row
         target_row = None
         for r in rows:
             if _safe_str(r.get("discord_id")) == discord_id:
@@ -95,45 +88,43 @@ class Transaction(commands.Cog):
 
         if not target_row:
             await interaction.followup.send(
-                f"❌ No player found in salaries.csv with discord_id `{discord_id}`.",
+                f"❌ No player found in salaries.csv for {member.mention}.",
                 ephemeral=True
             )
             return
 
-        old_team = _safe_str(target_row.get("team")) or "Unassigned"
-        target_row["team"] = new_team
+        old_team_name = _safe_str(target_row.get("team")) or "Unassigned"
 
-        # Write back (preserve existing columns)
+        # Update team in CSV
+        target_row["team"] = new_team_name
+
+        # Write back
         os.makedirs(os.path.dirname(CSV_FILE), exist_ok=True)
         with open(CSV_FILE, "w", encoding="utf-8", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
 
-        # Determine player display name for message
-        member_obj = interaction.guild.get_member(int(discord_id))
-        if member_obj is None:
-            try:
-                member_obj = await interaction.guild.fetch_member(int(discord_id))
-            except Exception:
-                member_obj = None
+        # Resolve old team role (by name from CSV)
+        old_team_role = discord.utils.get(interaction.guild.roles, name=old_team_name)
 
-        csv_nickname = _safe_str(target_row.get("nickname"))
-        player_name = (
-            member_obj.display_name if member_obj
-            else (csv_nickname if csv_nickname else f"<@{discord_id}>")
-        )
+        # Build ping-safe message parts
+        player_ping = member.mention
+        new_team_ping = team.mention
+        old_team_ping = old_team_role.mention if old_team_role else old_team_name
 
-        # Send log message to channel ID from env
+        log_text = f"{player_ping} has been added to {new_team_ping} from {old_team_ping}."
+
+        # Send log message
         log_channel = interaction.guild.get_channel(TRANSACTIONS_CHANNEL_ID) if TRANSACTIONS_CHANNEL_ID else None
-        log_text = f"**{player_name}** has been added to **{new_team}** from **{old_team}**."
-
         if log_channel and isinstance(log_channel, discord.TextChannel):
-            await log_channel.send(log_text)
+            await log_channel.send(
+                log_text,
+                allowed_mentions=discord.AllowedMentions(users=True, roles=True, everyone=False)
+            )
 
         await interaction.followup.send(
-            f"✅ Updated `{player_name}`: **{old_team} → {new_team}**" +
-            ("" if log_channel else "\n⚠️ TRANSACTIONS_CHANNEL_ID not set or channel not found; no log was posted."),
+            f"✅ Transaction complete: {member.display_name} — **{old_team_name} → {new_team_name}**",
             ephemeral=True
         )
 
