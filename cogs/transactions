@@ -1,0 +1,94 @@
+import discord
+from discord.ext import commands
+from discord import app_commands
+
+class TransactionCog(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.channel_id = 1446293692657700915 # 1446133808737943655
+
+    @app_commands.command(name="close-free-agency", description="Close free agency")
+    async def close_free_agency(self, interaction: discord.Interaction):
+        channel = self.bot.get_channel(self.channel_id)
+        if channel:
+            embed = discord.Embed(
+                title="Free Agency is Closed",
+                description="This marks the end for The Free Agent intake, no further Free Agent's will be added to the Free Agency from this point forward.",
+                color=discord.Color.red()
+            )
+            await channel.send(embed=embed)
+            await interaction.response.send_message("Free agency closed!", ephemeral=True)
+        else:
+            await interaction.response.send_message("Channel not found!", ephemeral=True)
+
+    @app_commands.command(name="open-free-agency", description="Open free agency")
+    async def open_free_agency(self, interaction: discord.Interaction):
+        channel = self.bot.get_channel(self.channel_id)
+        if channel:
+            embed = discord.Embed(
+                title="Free Agency is Open",
+                description="Free Agency is now open! Players can now be added to the Free Agency pool.",
+                color=discord.Color.green()
+            )
+            await channel.send(embed=embed)
+            await interaction.response.send_message("Free agency opened!", ephemeral=True)
+        else:
+            await interaction.response.send_message("Channel not found!", ephemeral=True)
+
+    @app_commands.command(name="trade", description="Announce a trade between teams")
+    @app_commands.describe(
+        team1="Team trading away the player",
+        team2="Team receiving the player",
+        player="Player being traded"
+    )
+    async def trade(self, interaction: discord.Interaction, team1: discord.Role, team2: discord.Role, player: discord.Member):
+        channel = self.bot.get_channel(self.channel_id)
+        if channel:
+            embed = discord.Embed(
+                title="Transaction Alert",
+                description=f"{player.mention} has been traded from {team1.mention} to {team2.mention}!",
+                color=discord.Color.blue()
+            )
+            await channel.send(embed=embed)
+            await interaction.response.send_message("Trade announced!", ephemeral=True)
+        else:
+            await interaction.response.send_message("Channel not found!", ephemeral=True)
+
+    @app_commands.command(name="drop-to-free-agency", description="Drop a player to free agency")
+    @app_commands.describe(
+        team1="Team dropping the player",
+        player="Player being dropped"
+    )
+    async def drop_to_free_agency(self, interaction: discord.Interaction, team1: discord.Role, player: discord.Member):
+        channel = self.bot.get_channel(self.channel_id)
+        if channel:
+            embed = discord.Embed(
+                title="Transaction Alert",
+                description=f"{player.mention} has been dropped to the <@&775160645791776800>!",
+                color=discord.Color.orange()
+            )
+            await channel.send(embed=embed)
+            await interaction.response.send_message("Player dropped to free agency!", ephemeral=True)
+        else:
+            await interaction.response.send_message("Channel not found!", ephemeral=True)
+
+    @app_commands.command(name="pick-up-from-free-agency", description="Pick up a player from free agency")
+    @app_commands.describe(
+        team1="Team picking up the player",
+        player="Player being picked up"
+    )
+    async def pick_up_from_free_agency(self, interaction: discord.Interaction, team1: discord.Role, player: discord.Member):
+        channel = self.bot.get_channel(self.channel_id)
+        if channel:
+            embed = discord.Embed(
+                title="Transaction Alert",
+                description=f"{team1.mention} has picked up {player.mention} from the <@&775160645791776800>!",
+                color=discord.Color.green()
+            )
+            await channel.send(embed=embed)
+            await interaction.response.send_message("Player picked up from free agency!", ephemeral=True)
+        else:
+            await interaction.response.send_message("Channel not found!", ephemeral=True)
+
+async def setup(bot):
+    await bot.add_cog(TransactionCog(bot))

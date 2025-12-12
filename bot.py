@@ -134,7 +134,8 @@ async def main():
             "cogs.help",
             "cogs.propose",
             "cogs.confirm",
-            "cogs.refresh"
+            "cogs.refresh",
+            "cogs.transactions"
         ]:
             try:
                 await bot.load_extension(cog_name)
