@@ -84,7 +84,7 @@ class Transactions(commands.Cog):
 
         team_mention = f"<@&{role_id}>"
         await channel.send(
-            f"{team_mention} releases {drop_player.mention} to Free Agency and signs {add_player.mention}"
+            f"{team_mention} releases {drop_player.mention} to 2-Day Waivers and signs {add_player.mention}"
         )
 
     @app_commands.command(
