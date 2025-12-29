@@ -155,13 +155,19 @@ class StartWeek(commands.Cog):
                     )
 
                 step = "SEND_EMBED"
+                embed_description = (
+                    "This is your scheduling channel for round 1 of the preseason tournament."
+                    if week_number in (21, 22, 23, 24)
+                    else f"This is your scheduling channel for **Week {week_number}**."
+                )
+
                 embed = discord.Embed(
                     title=f"📅 Week {week_number} Scheduling",
-                    description=f"This is your scheduling channel for **Week {week_number}**.",
+                    description=embed_description,
                     color=discord.Color.blue()
                 )
                 embed.add_field(name="🏆 Matchup", value=f"**{team_a}** vs **{team_b}**", inline=False)
-                embed.set_footer(text="Please confirm your match time before the deadline.")
+                embed.set_footer(text="Please confirm your match time before the deadline. Please use /propose to propose a time and /confirm to confirm the proposed time.")
                 await new_channel.send(embed=embed)
 
             step = "FINAL_RESPONSE"
