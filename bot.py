@@ -131,11 +131,15 @@ async def main():
             "cogs.updateuser",
             "cogs.profile",
             "cogs.teaminfo",
-            "cogs.help",
-            "cogs.propose",
-            "cogs.confirm",
-            "cogs.refresh",
-            "cogs.transactions"
+            "cogs.help",            # List available commands and a short description
+            "cogs.propose",         # Propose Match Day and Time
+            "cogs.confirm",         # Confirm proposed Match Day and Time
+            "cogs.refresh",         # Refreshes the .csv to match the Google Sheet
+            # "cogs.transactions"
+            "cogs.add"             # Adds player into roster spot
+            # "cogs.drop",            # Removed player from roster spot
+            # "cogs.sub"              # Applies Team role for certain duration
+
         ]:
             try:
                 await bot.load_extension(cog_name)
