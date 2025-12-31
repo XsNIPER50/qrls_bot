@@ -181,6 +181,13 @@ class Add(commands.Cog):
                 # Try fetching if not cached
                 member = await guild.fetch_member(player_id)
 
+            logger.info(
+                "Role update: member=%s free_agent_role=%s team_role=%s",
+                member.id,
+                free_agent_role.id,
+                team_role.id
+            )
+
             # Role operations (requires Manage Roles + role hierarchy)
             to_remove = [free_agent_role] if free_agent_role in member.roles else []
             to_add = [team_role] if team_role not in member.roles else []
@@ -237,15 +244,25 @@ class Add(commands.Cog):
 
         async def interaction_check(self, interaction: discord.Interaction) -> bool:
             if not interaction.guild or not isinstance(interaction.user, discord.Member):
-                await interaction.response.send_message("❌ Must be used in a server.", ephemeral=True)
+                # For component interactions, always respond quickly
+                try:
+                    await interaction.response.send_message("❌ Must be used in a server.", ephemeral=True)
+                except discord.HTTPException:
+                    pass
                 return False
 
             if not self.cog._is_admin_member(interaction.user):
-                await interaction.response.send_message("🚫 Only admins can approve/reject.", ephemeral=True)
+                try:
+                    await interaction.response.send_message("🚫 Only admins can approve/reject.", ephemeral=True)
+                except discord.HTTPException:
+                    pass
                 return False
 
             if self.decided:
-                await interaction.response.send_message("ℹ️ This transaction has already been decided.", ephemeral=True)
+                try:
+                    await interaction.response.send_message("ℹ️ This transaction has already been decided.", ephemeral=True)
+                except discord.HTTPException:
+                    pass
                 return False
 
             return True
@@ -255,6 +272,12 @@ class Add(commands.Cog):
             self.decided = True
             approver = interaction.user
 
+            # ✅ ACK immediately to avoid "Unknown interaction"
+            try:
+                await interaction.response.defer(ephemeral=True, thinking=True)
+            except discord.HTTPException:
+                pass
+
             try:
                 # Re-open sheet and re-validate (state could have changed since request)
                 ws = self.cog._open_worksheet()
@@ -262,7 +285,10 @@ class Add(commands.Cog):
 
                 captain_row = self.cog._find_row_index_by_discord_id(values, self.captain_id)
                 if not captain_row:
-                    await interaction.response.send_message("❌ Captain not found in sheet anymore.", ephemeral=True)
+                    try:
+                        await interaction.followup.send("❌ Captain not found in sheet anymore.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
                     await self.cog._post_in_origin_channel(
                         self.origin_channel_id,
                         "❌ Transaction could not be approved (captain not found in sheet)."
@@ -273,7 +299,10 @@ class Add(commands.Cog):
                 # Captain team could have changed—use current value from the sheet
                 captain_team_current = self.cog._get_team_from_row(values, captain_row)
                 if not captain_team_current:
-                    await interaction.response.send_message("❌ Captain team is blank in sheet.", ephemeral=True)
+                    try:
+                        await interaction.followup.send("❌ Captain team is blank in sheet.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
                     await self.cog._post_in_origin_channel(
                         self.origin_channel_id,
                         "❌ Transaction could not be approved (captain team blank in sheet)."
@@ -283,7 +312,10 @@ class Add(commands.Cog):
 
                 player_row = self.cog._find_row_index_by_discord_id(values, self.player_id)
                 if not player_row:
-                    await interaction.response.send_message("❌ Player not found in sheet anymore.", ephemeral=True)
+                    try:
+                        await interaction.followup.send("❌ Player not found in sheet anymore.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
                     await self.cog._post_in_origin_channel(
                         self.origin_channel_id,
                         "❌ Transaction could not be approved (player not found in sheet)."
@@ -293,10 +325,13 @@ class Add(commands.Cog):
 
                 player_team_current = self.cog._get_team_from_row(values, player_row)
                 if not _is_free_agent(player_team_current):
-                    await interaction.response.send_message(
-                        f"❌ Cannot approve: player is no longer a Free Agent (currently: {player_team_current}).",
-                        ephemeral=True
-                    )
+                    try:
+                        await interaction.followup.send(
+                            f"❌ Cannot approve: player is no longer a Free Agent (currently: {player_team_current}).",
+                            ephemeral=True
+                        )
+                    except discord.HTTPException:
+                        pass
                     await self.cog._post_in_origin_channel(
                         self.origin_channel_id,
                         f"❌ Transaction approval failed: player is no longer a Free Agent (currently **{player_team_current}**)."
@@ -306,10 +341,13 @@ class Add(commands.Cog):
 
                 roster_count = self.cog._count_team(values, captain_team_current)
                 if roster_count >= 4:
-                    await interaction.response.send_message(
-                        f"❌ Cannot approve: {captain_team_current} roster is full ({roster_count}/4).",
-                        ephemeral=True
-                    )
+                    try:
+                        await interaction.followup.send(
+                            f"❌ Cannot approve: {captain_team_current} roster is full ({roster_count}/4).",
+                            ephemeral=True
+                        )
+                    except discord.HTTPException:
+                        pass
                     await self.cog._post_in_origin_channel(
                         self.origin_channel_id,
                         f"❌ Transaction approval failed: **{captain_team_current}** roster is full ({roster_count}/4)."
@@ -327,7 +365,11 @@ class Add(commands.Cog):
                     team_name=captain_team_current
                 )
 
-                await interaction.response.send_message("✅ Approved and applied to Google Sheet.", ephemeral=True)
+                # Admin confirmation (followup, not response)
+                try:
+                    await interaction.followup.send("✅ Approved and applied.", ephemeral=True)
+                except discord.HTTPException:
+                    pass
 
                 # Notify origin channel of approval + role update status
                 if role_ok:
@@ -356,7 +398,7 @@ class Add(commands.Cog):
                 traceback.print_exc()
 
                 try:
-                    await interaction.response.send_message(
+                    await interaction.followup.send(
                         "❌ An error occurred while approving. Check bot console.",
                         ephemeral=True
                     )
@@ -374,7 +416,17 @@ class Add(commands.Cog):
             self.decided = True
             approver = interaction.user
 
-            await interaction.response.send_message("🚫 Rejected.", ephemeral=True)
+            # ✅ ACK immediately to avoid "Unknown interaction"
+            try:
+                await interaction.response.defer(ephemeral=True, thinking=True)
+            except discord.HTTPException:
+                pass
+
+            try:
+                await interaction.followup.send("🚫 Rejected.", ephemeral=True)
+            except discord.HTTPException:
+                pass
+
             await self.cog._post_in_origin_channel(
                 self.origin_channel_id,
                 f"🚫 Transaction rejected by {approver.mention}."
