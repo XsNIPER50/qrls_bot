@@ -66,6 +66,9 @@ class Add(commands.Cog):
         self.admins_role_id = _get_env_int("ADMINS_ROLE_ID")
         self.pending_channel_id = _get_env_int("PENDING_TRANSACTIONS_CHANNEL_ID")
 
+        # ✅ public log channel for completed transactions
+        self.transactions_channel_id = _get_env_int("TRANSACTIONS_CHANNEL_ID")
+
         self.sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
         self.sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
         self.worksheet_name = os.getenv("GOOGLE_WORKSHEET", "")
@@ -148,6 +151,23 @@ class Add(commands.Cog):
         ch = self.bot.get_channel(origin_channel_id)
         if isinstance(ch, discord.TextChannel):
             await ch.send(message)
+
+    async def _post_transaction_log(self, team_name: str, player_member: Optional[discord.Member], player_display: str):
+        """
+        Post to TRANSACTIONS_CHANNEL_ID after a fully successful transaction (sheet updated).
+        Message format: "[Team Name] adds [player1] to their roster from Free Agency."
+        """
+        if not self.transactions_channel_id:
+            logger.warning("TRANSACTIONS_CHANNEL_ID missing/invalid; skipping transaction log post.")
+            return
+
+        ch = self.bot.get_channel(self.transactions_channel_id)
+        if not isinstance(ch, discord.TextChannel):
+            logger.warning("TRANSACTIONS_CHANNEL_ID does not resolve to a text channel; skipping.")
+            return
+
+        player_text = player_member.mention if isinstance(player_member, discord.Member) else player_display
+        await ch.send(f"**{team_name}** adds {player_text} to their roster from Free Agency.")
 
     async def _apply_discord_roles_after_approval(
         self,
@@ -355,15 +375,32 @@ class Add(commands.Cog):
                     await self._finalize_buttons(interaction, "❌ Approval failed (roster full).")
                     return
 
-                # Apply change: Column D (4th col) to captain team
+                # ✅ Apply change: Column D (4th col) to captain team
                 ws.update_cell(player_row, self.cog.COL_TEAM + 1, captain_team_current)
 
-                # After sheet update: update Discord roles (remove Free Agent, add team role)
+                # ✅ After sheet update: update Discord roles (remove Free Agent, add team role)
                 role_ok, role_msg = await self.cog._apply_discord_roles_after_approval(
                     guild=interaction.guild,
                     player_id=self.player_id,
                     team_name=captain_team_current
                 )
+
+                # ✅ Post to TRANSACTIONS_CHANNEL_ID after sheet update (success criteria = sheet updated)
+                player_member = None
+                try:
+                    player_member = interaction.guild.get_member(self.player_id) or await interaction.guild.fetch_member(self.player_id)
+                except (discord.NotFound, discord.Forbidden):
+                    player_member = None
+
+                try:
+                    await self.cog._post_transaction_log(
+                        team_name=captain_team_current,
+                        player_member=player_member,
+                        player_display=self.player_display
+                    )
+                except Exception as e:
+                    logger.error("Transaction log post failed: %r", e)
+                    traceback.print_exc()
 
                 # Admin confirmation (followup, not response)
                 try:
