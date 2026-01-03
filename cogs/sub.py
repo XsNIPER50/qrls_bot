@@ -3,7 +3,7 @@ import json
 import logging
 import traceback
 import asyncio
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, time
 from zoneinfo import ZoneInfo
 
@@ -27,7 +27,6 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
-
 
 EASTERN = ZoneInfo("America/New_York")
 
@@ -74,6 +73,23 @@ def _next_sunday_2359(now_et: datetime) -> datetime:
 
 
 class Sub(commands.Cog):
+    """
+    /sub:
+      - Captain-only (CAPTAINS_ROLE_ID)
+      - Category-locked (TRANSACTIONS_CATEGORY_ID)
+      - Requires Admin Approval (ADMINS_ROLE_ID) via buttons in PENDING_TRANSACTIONS_CHANNEL_ID
+      - No Google Sheet changes
+      - Validations:
+          1) player1 must be on captain's team (sheet col D)
+          2) player2 must be Free Agent (sheet col D)
+      - On approve:
+          - add captain team role to player2 temporarily until Sunday 11:59pm ET
+          - keep Free Agent role
+          - persist to data/subs.json so it survives restarts
+      - Transaction log (TRANSACTIONS_CHANNEL_ID):
+          "@Team signs @player2 in place of @player1 on a sub deal for the week."
+    """
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
@@ -92,8 +108,16 @@ class Sub(commands.Cog):
         self.COL_DISCORD_ID = 0
         self.COL_TEAM = 3
 
+        # Persistence
+        self.subs_path = os.path.join("data", "subs.json")
+        self._subs_lock = asyncio.Lock()
+        self._removal_tasks: Dict[str, asyncio.Task] = {}
+
+        # Kick off rehydration ASAP
+        self.bot.loop.create_task(self._rehydrate_subs())
+
     # ---------------------------
-    # Helpers
+    # Helpers: Permissions
     # ---------------------------
     def _has_role_id(self, member: discord.Member, role_id: int) -> bool:
         return any(r.id == role_id for r in member.roles)
@@ -105,6 +129,9 @@ class Sub(commands.Cog):
             return True
         return False
 
+    # ---------------------------
+    # Helpers: Google Sheet
+    # ---------------------------
     def _get_gspread_client(self) -> gspread.Client:
         """
         Supports GOOGLE_SERVICE_ACCOUNT_JSON as:
@@ -138,10 +165,12 @@ class Sub(commands.Cog):
 
         gc = self._get_gspread_client()
         sh = gc.open_by_key(self.sheet_id)
-        ws = sh.worksheet(self.worksheet_name)
-        return ws
+        return sh.worksheet(self.worksheet_name)
 
     def _find_row_index_by_discord_id(self, values: list[list[str]], discord_id: int) -> Optional[int]:
+        """
+        Returns 1-based row index for gspread (since update_cell uses 1-based indexes).
+        """
         target = str(discord_id)
         for i, row in enumerate(values, start=1):
             if len(row) > self.COL_DISCORD_ID and _normalize(row[self.COL_DISCORD_ID]) == target:
@@ -152,19 +181,21 @@ class Sub(commands.Cog):
         row = values[row_index_1based - 1]
         return _normalize(row[self.COL_TEAM]) if len(row) > self.COL_TEAM else ""
 
+    # ---------------------------
+    # Helpers: Messaging
+    # ---------------------------
     async def _post_in_origin_channel(self, origin_channel_id: int, message: str):
         ch = self.bot.get_channel(origin_channel_id)
         if isinstance(ch, discord.TextChannel):
             await ch.send(message)
 
-    async def _post_transaction_log(self, team_name: str, player: discord.Member):
+    async def _post_transaction_log(self, team_name: str, player1: discord.Member, player2: discord.Member):
         """
-        Post to TRANSACTIONS_CHANNEL_ID after approval.
-        Message format:
-        "@Team signs @player on a sub deal"
+        "@Team signs @player2 in place of @player1 on a sub deal for the week."
+        Team should be role-pinged via TEAM_INFO.
         """
         if not self.transactions_channel_id:
-            logger.warning("TRANSACTIONS_CHANNEL_ID missing/invalid; skipping transaction log post.")
+            logger.warning("TRANSACTIONS_CHANNEL_ID missing/invalid; skipping transaction log.")
             return
 
         ch = self.bot.get_channel(self.transactions_channel_id)
@@ -175,66 +206,136 @@ class Sub(commands.Cog):
         team_role_id = _get_team_role_id(team_name)
         team_text = f"<@&{team_role_id}>" if team_role_id else f"**{team_name}**"
 
-        await ch.send(f"{team_text} signs {player.mention} on a sub deal")
+        await ch.send(f"{team_text} signs {player2.mention} in place of {player1.mention} on a sub deal for the week.")
 
-    async def _apply_temp_team_role(
-        self,
-        guild: discord.Guild,
-        player_id: int,
-        team_name: str,
-        end_dt_et: datetime
-    ) -> tuple[bool, str]:
+    # ---------------------------
+    # Persistence: subs.json
+    # ---------------------------
+    def _make_sub_key(self, guild_id: int, user_id: int, role_id: int, expires_at_iso: str) -> str:
+        return f"{guild_id}:{user_id}:{role_id}:{expires_at_iso}"
+
+    async def _load_subs(self) -> List[Dict[str, Any]]:
+        async with self._subs_lock:
+            os.makedirs(os.path.dirname(self.subs_path), exist_ok=True)
+            if not os.path.exists(self.subs_path):
+                return []
+            try:
+                with open(self.subs_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    return data
+                return []
+            except Exception as e:
+                logger.error("Failed to read %s: %r", self.subs_path, e)
+                traceback.print_exc()
+                return []
+
+    async def _save_subs(self, subs: List[Dict[str, Any]]):
+        async with self._subs_lock:
+            os.makedirs(os.path.dirname(self.subs_path), exist_ok=True)
+            with open(self.subs_path, "w", encoding="utf-8") as f:
+                json.dump(subs, f, indent=2)
+
+    async def _add_sub_record(self, record: Dict[str, Any]):
+        subs = await self._load_subs()
+        subs.append(record)
+        await self._save_subs(subs)
+
+    async def _remove_sub_record_by_key(self, key: str):
+        subs = await self._load_subs()
+        new_subs = [r for r in subs if r.get("_key") != key]
+        await self._save_subs(new_subs)
+
+    async def _rehydrate_subs(self):
         """
-        Adds team role (keeps Free Agent role), and schedules removal at end_dt_et.
+        On startup: load subs.json and schedule removals (or remove immediately if expired).
         """
+        await self.bot.wait_until_ready()
+
+        subs = await self._load_subs()
+        if not subs:
+            logger.info("No persisted subs to rehydrate.")
+            return
+
+        logger.info("Rehydrating %s persisted sub(s)...", len(subs))
+        for rec in subs:
+            try:
+                guild_id = int(rec["guild_id"])
+                user_id = int(rec["user_id"])
+                role_id = int(rec["role_id"])
+                expires_at = datetime.fromisoformat(rec["expires_at"])
+                key = rec.get("_key") or self._make_sub_key(guild_id, user_id, role_id, rec["expires_at"])
+                rec["_key"] = key  # normalize
+
+                # If expired already, attempt removal now.
+                now_et = datetime.now(EASTERN)
+                if expires_at <= now_et:
+                    self.bot.loop.create_task(self._remove_role_and_cleanup(guild_id, user_id, role_id, key))
+                    continue
+
+                # Otherwise schedule it
+                self._schedule_removal(guild_id, user_id, role_id, expires_at, key)
+            except Exception as e:
+                logger.error("Bad sub record in file: %r | %r", e, rec)
+
+        # Save normalized keys back
+        await self._save_subs(subs)
+
+    def _schedule_removal(self, guild_id: int, user_id: int, role_id: int, expires_at: datetime, key: str):
+        # Avoid duplicate tasks
+        if key in self._removal_tasks and not self._removal_tasks[key].done():
+            return
+
+        seconds = max(0, (expires_at - datetime.now(EASTERN)).total_seconds())
+
+        async def _job():
+            try:
+                await asyncio.sleep(seconds)
+                await self._remove_role_and_cleanup(guild_id, user_id, role_id, key)
+            except Exception as e:
+                logger.error("Scheduled removal job failed: %r", e)
+                traceback.print_exc()
+
+        self._removal_tasks[key] = self.bot.loop.create_task(_job())
+        logger.info("Scheduled sub role removal key=%s in %ss", key, int(seconds))
+
+    async def _remove_role_and_cleanup(self, guild_id: int, user_id: int, role_id: int, key: str):
+        """
+        Remove the temp team role and remove the record from subs.json.
+        """
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            # Can't act, but still cleanup to prevent permanent stuck records
+            await self._remove_sub_record_by_key(key)
+            return
+
+        role = guild.get_role(role_id)
+        if not role:
+            await self._remove_sub_record_by_key(key)
+            return
+
         try:
-            team_role_id = _get_team_role_id(team_name)
-            if not team_role_id:
-                return False, f"Team role ID missing/invalid in TEAM_INFO for team `{team_name}`."
+            member = guild.get_member(user_id)
+            if member is None:
+                member = await guild.fetch_member(user_id)
 
-            team_role = guild.get_role(team_role_id)
-            if not team_role:
-                return False, f"Team role for `{team_name}` (id={team_role_id}) not found in server."
-
-            member = guild.get_member(player_id) or await guild.fetch_member(player_id)
-
-            # Add team role if needed
-            if team_role not in member.roles:
-                await member.add_roles(team_role, reason=f"/sub approved: temp add {team_name} until {end_dt_et.isoformat()}")
-
-            # Schedule removal
-            seconds = max(0, (end_dt_et - datetime.now(EASTERN)).total_seconds())
-
-            async def _remove_later():
-                try:
-                    await asyncio.sleep(seconds)
-                    # Re-fetch member to ensure current roles
-                    m = guild.get_member(player_id)
-                    if m is None:
-                        try:
-                            m = await guild.fetch_member(player_id)
-                        except (discord.NotFound, discord.Forbidden):
-                            return
-
-                    if team_role in m.roles:
-                        await m.remove_roles(team_role, reason=f"/sub expired: remove {team_name} temp role")
-                        logger.info("Temp sub expired; removed role %s from user_id=%s", team_role.id, player_id)
-                except Exception as e:
-                    logger.error("Temp removal task failed: %r", e)
-                    traceback.print_exc()
-
-            self.bot.loop.create_task(_remove_later())
-
-            return True, f"Added {team_role.mention} temporarily until {end_dt_et.strftime('%Y-%m-%d %H:%M ET')}."
+            if role in member.roles:
+                await member.remove_roles(role, reason="/sub expired: remove temporary sub role")
+                logger.info("Expired sub: removed role_id=%s from user_id=%s in guild=%s", role_id, user_id, guild_id)
 
         except discord.Forbidden:
-            return False, "Bot lacks permission to manage roles (or role hierarchy prevents it)."
+            logger.error("Expired sub: missing perms to remove role_id=%s from user_id=%s", role_id, user_id)
         except discord.NotFound:
-            return False, "Player not found in the server when attempting role update."
+            logger.warning("Expired sub: user_id=%s not found in guild=%s", user_id, guild_id)
         except Exception as e:
-            logger.error("Temp role update failed: %r", e)
+            logger.error("Expired sub: unexpected error: %r", e)
             traceback.print_exc()
-            return False, "Unexpected error while updating roles (see console)."
+        finally:
+            await self._remove_sub_record_by_key(key)
+            # cancel/remove task ref
+            t = self._removal_tasks.pop(key, None)
+            if t and not t.done():
+                t.cancel()
 
     # ---------------------------
     # Approval View
@@ -246,18 +347,24 @@ class Sub(commands.Cog):
             origin_channel_id: int,
             captain_id: int,
             captain_team: str,
-            player_id: int,
-            player_display: str,
-            end_dt_et: datetime,
+            player1_id: int,
+            player1_display: str,
+            player2_id: int,
+            player2_display: str,
+            expires_at: datetime,
         ):
-            super().__init__(timeout=60 * 60)
+            super().__init__(timeout=60 * 60)  # 1 hour
             self.cog = cog
             self.origin_channel_id = origin_channel_id
             self.captain_id = captain_id
             self.captain_team = captain_team
-            self.player_id = player_id
-            self.player_display = player_display
-            self.end_dt_et = end_dt_et
+
+            self.player1_id = player1_id
+            self.player1_display = player1_display
+            self.player2_id = player2_id
+            self.player2_display = player2_display
+
+            self.expires_at = expires_at
             self.decided = False
 
         async def _finalize_buttons(self, interaction: discord.Interaction, status_text: str):
@@ -286,7 +393,7 @@ class Sub(commands.Cog):
 
             if self.decided:
                 try:
-                    await interaction.response.send_message("ℹ️ This transaction has already been decided.", ephemeral=True)
+                    await interaction.response.send_message("ℹ️ This request has already been decided.", ephemeral=True)
                 except discord.HTTPException:
                     pass
                 return False
@@ -298,137 +405,231 @@ class Sub(commands.Cog):
             self.decided = True
             approver = interaction.user
 
-            # ACK immediately
+            # ✅ ACK immediately so the admin click doesn't die
             try:
                 await interaction.response.defer(ephemeral=True, thinking=True)
             except discord.HTTPException:
                 pass
 
             try:
-                # Re-check sheet status: player must still be Free Agent
+                guild = interaction.guild
+                if guild is None:
+                    try:
+                        await interaction.followup.send("❌ Server not found.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
+                    await self._finalize_buttons(interaction, "❌ Failed (no guild).")
+                    return
+
+                # Re-check sheet conditions (auto-reject if violated):
                 ws = self.cog._open_worksheet()
                 values = ws.get_all_values()
 
-                player_row = self.cog._find_row_index_by_discord_id(values, self.player_id)
-                if not player_row:
+                # Captain still on same team?
+                cap_row = self.cog._find_row_index_by_discord_id(values, self.captain_id)
+                if not cap_row:
+                    await self.cog._post_in_origin_channel(self.origin_channel_id, "❌ Sub approval failed (captain not found in sheet).")
+                    await self._finalize_buttons(interaction, "❌ Failed (captain not found in sheet).")
                     try:
-                        await interaction.followup.send("❌ Player not found in sheet anymore.", ephemeral=True)
+                        await interaction.followup.send("❌ Captain not found in sheet anymore.", ephemeral=True)
                     except discord.HTTPException:
                         pass
-                    await self.cog._post_in_origin_channel(self.origin_channel_id, "❌ Sub approval failed (player not found in sheet).")
-                    await self._finalize_buttons(interaction, "❌ Failed (player not found in sheet).")
                     return
 
-                player_team_current = self.cog._get_team_from_row(values, player_row)
-                if not _is_free_agent(player_team_current):
-                    # Auto reject
-                    try:
-                        await interaction.followup.send(
-                            f"🚫 Auto-rejected: player is not a Free Agent (currently: {player_team_current}).",
-                            ephemeral=True
-                        )
-                    except discord.HTTPException:
-                        pass
+                cap_team_current = self.cog._get_team_from_row(values, cap_row)
+                if _normalize(cap_team_current) != _normalize(self.captain_team):
                     await self.cog._post_in_origin_channel(
                         self.origin_channel_id,
-                        f"🚫 Sub request auto-rejected: player is currently on **{player_team_current or 'Unknown'}**."
+                        f"🚫 Sub auto-rejected: captain team changed (was **{self.captain_team}**, now **{cap_team_current or 'Unknown'}**)."
                     )
-                    await self._finalize_buttons(interaction, "🚫 Auto-rejected (player not Free Agent).")
+                    await self._finalize_buttons(interaction, "🚫 Auto-rejected (captain team changed).")
+                    try:
+                        await interaction.followup.send("🚫 Auto-rejected: captain team changed in sheet.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
                     return
 
-                # Apply temp team role (no sheet changes)
-                role_ok, role_msg = await self.cog._apply_temp_team_role(
-                    guild=interaction.guild,
-                    player_id=self.player_id,
-                    team_name=self.captain_team,
-                    end_dt_et=self.end_dt_et
+                # Player1 must still be on captain team
+                p1_row = self.cog._find_row_index_by_discord_id(values, self.player1_id)
+                if not p1_row:
+                    await self.cog._post_in_origin_channel(self.origin_channel_id, "🚫 Sub auto-rejected: player being subbed is no longer in the sheet.")
+                    await self._finalize_buttons(interaction, "🚫 Auto-rejected (player1 not in sheet).")
+                    try:
+                        await interaction.followup.send("🚫 Auto-rejected: player1 not found in sheet.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
+                    return
+
+                p1_team = self.cog._get_team_from_row(values, p1_row)
+                if _normalize(p1_team) != _normalize(self.captain_team):
+                    await self.cog._post_in_origin_channel(
+                        self.origin_channel_id,
+                        f"🚫 Sub auto-rejected: {self.player1_display} is not on **{self.captain_team}** (currently **{p1_team or 'Unknown'}**)."
+                    )
+                    await self._finalize_buttons(interaction, "🚫 Auto-rejected (player1 not on captain team).")
+                    try:
+                        await interaction.followup.send("🚫 Auto-rejected: player1 is not on captain's team.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
+                    return
+
+                # Player2 must still be Free Agent
+                p2_row = self.cog._find_row_index_by_discord_id(values, self.player2_id)
+                if not p2_row:
+                    await self.cog._post_in_origin_channel(self.origin_channel_id, "🚫 Sub auto-rejected: player subbing in is no longer in the sheet.")
+                    await self._finalize_buttons(interaction, "🚫 Auto-rejected (player2 not in sheet).")
+                    try:
+                        await interaction.followup.send("🚫 Auto-rejected: player2 not found in sheet.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
+                    return
+
+                p2_team = self.cog._get_team_from_row(values, p2_row)
+                if not _is_free_agent(p2_team):
+                    await self.cog._post_in_origin_channel(
+                        self.origin_channel_id,
+                        f"🚫 Sub auto-rejected: {self.player2_display} is not a Free Agent (currently **{p2_team or 'Unknown'}**)."
+                    )
+                    await self._finalize_buttons(interaction, "🚫 Auto-rejected (player2 not Free Agent).")
+                    try:
+                        await interaction.followup.send("🚫 Auto-rejected: player2 is not Free Agent.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
+                    return
+
+                # Apply: add team role to player2 (keep Free Agent)
+                team_role_id = _get_team_role_id(self.captain_team)
+                if not team_role_id:
+                    await self.cog._post_in_origin_channel(
+                        self.origin_channel_id,
+                        f"❌ Sub approved by {approver.mention}, but TEAM_INFO has no role id for **{self.captain_team}**."
+                    )
+                    await self._finalize_buttons(interaction, "❌ Approved (but missing TEAM_INFO role id).")
+                    try:
+                        await interaction.followup.send("❌ TEAM_INFO missing role id for that team.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
+                    return
+
+                team_role = guild.get_role(team_role_id)
+                if not team_role:
+                    await self.cog._post_in_origin_channel(
+                        self.origin_channel_id,
+                        f"❌ Sub approved by {approver.mention}, but team role not found in server (id={team_role_id})."
+                    )
+                    await self._finalize_buttons(interaction, "❌ Approved (but team role not found).")
+                    try:
+                        await interaction.followup.send("❌ Team role not found in server.", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
+                    return
+
+                # Fetch members for mentions + role ops + logs
+                player1_member = guild.get_member(self.player1_id) or await guild.fetch_member(self.player1_id)
+                player2_member = guild.get_member(self.player2_id) or await guild.fetch_member(self.player2_id)
+
+                # Add role now
+                try:
+                    if team_role not in player2_member.roles:
+                        await player2_member.add_roles(team_role, reason=f"/sub approved: temp add {self.captain_team} until {self.expires_at.isoformat()}")
+                except discord.Forbidden:
+                    await self.cog._post_in_origin_channel(
+                        self.origin_channel_id,
+                        f"✅ Sub approved by {approver.mention}, but ⚠️ bot cannot add roles (permission/hierarchy)."
+                    )
+                    await self._finalize_buttons(interaction, "✅ Approved (⚠️ role add failed).")
+                    try:
+                        await interaction.followup.send("✅ Approved, but ⚠️ role add failed (check perms/hierarchy).", ephemeral=True)
+                    except discord.HTTPException:
+                        pass
+                    return
+
+                # Persist + schedule removal (restart-proof)
+                expires_iso = self.expires_at.isoformat()
+                key = self.cog._make_sub_key(guild.id, player2_member.id, team_role.id, expires_iso)
+
+                record = {
+                    "_key": key,
+                    "guild_id": guild.id,
+                    "user_id": player2_member.id,
+                    "role_id": team_role.id,
+                    "expires_at": expires_iso
+                }
+                await self.cog._add_sub_record(record)
+                self.cog._schedule_removal(guild.id, player2_member.id, team_role.id, self.expires_at, key)
+
+                # Log + origin message
+                try:
+                    await self.cog._post_transaction_log(self.captain_team, player1_member, player2_member)
+                except Exception as e:
+                    logger.error("Sub transaction log failed: %r", e)
+                    traceback.print_exc()
+
+                await self.cog._post_in_origin_channel(
+                    self.origin_channel_id,
+                    f"✅ Transaction approved by {approver.mention}. {player2_member.mention} has been subbed in for {player1_member.mention} until **Sunday 11:59pm ET**."
                 )
 
-                # Post transaction log
-                player_member = None
-                try:
-                    player_member = interaction.guild.get_member(self.player_id) or await interaction.guild.fetch_member(self.player_id)
-                except (discord.NotFound, discord.Forbidden):
-                    player_member = None
+                # Buttons message should stick around (like /add and /drop) — we edit it to a final status.
+                await self._finalize_buttons(
+                    interaction,
+                    f"✅ Approved by {approver.mention} — {player2_member.mention} subbing for {player1_member.mention} (expires Sunday 11:59pm ET)"
+                )
 
-                if isinstance(player_member, discord.Member):
-                    try:
-                        await self.cog._post_transaction_log(self.captain_team, player_member)
-                    except Exception as e:
-                        logger.error("Sub transaction log post failed: %r", e)
-                        traceback.print_exc()
-
+                # Admin ephemeral confirmation (fine to be ephemeral)
                 try:
                     await interaction.followup.send("✅ Approved.", ephemeral=True)
                 except discord.HTTPException:
                     pass
 
-                if role_ok:
-                    await self.cog._post_in_origin_channel(
-                        self.origin_channel_id,
-                        f"✅ Sub approved by {approver.mention}. **{self.player_display}** has been subbed in until **Sunday 11:59pm ET**.\n"
-                        f"🔧 {role_msg}"
-                    )
-                    await self._finalize_buttons(
-                        interaction,
-                        f"✅ Approved by {approver.mention} — **{self.player_display}** subbed in until Sunday 11:59pm ET"
-                    )
-                else:
-                    await self.cog._post_in_origin_channel(
-                        self.origin_channel_id,
-                        f"✅ Sub approved by {approver.mention}, but ⚠️ role update issue: {role_msg}"
-                    )
-                    await self._finalize_buttons(
-                        interaction,
-                        f"✅ Approved by {approver.mention} (⚠️ role update issue)"
-                    )
-
             except Exception as e:
                 logger.error("Approve failed: %r", e)
                 traceback.print_exc()
-
+                await self.cog._post_in_origin_channel(self.origin_channel_id, "❌ Sub approval failed due to an internal error (see bot console).")
+                await self._finalize_buttons(interaction, "❌ Failed (internal error).")
                 try:
                     await interaction.followup.send("❌ Error while approving. Check console.", ephemeral=True)
                 except discord.HTTPException:
                     pass
-
-                await self.cog._post_in_origin_channel(self.origin_channel_id, "❌ Sub approval failed due to an internal error.")
-                await self._finalize_buttons(interaction, "❌ Failed (internal error).")
 
         @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger)
         async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
             self.decided = True
             approver = interaction.user
 
-            # ACK immediately
+            # ✅ ACK immediately
             try:
                 await interaction.response.defer(ephemeral=True, thinking=True)
             except discord.HTTPException:
                 pass
+
+            await self.cog._post_in_origin_channel(self.origin_channel_id, f"🚫 Transaction rejected by {approver.mention}.")
+            await self._finalize_buttons(interaction, f"🚫 Rejected by {approver.mention}")
 
             try:
                 await interaction.followup.send("🚫 Rejected.", ephemeral=True)
             except discord.HTTPException:
                 pass
 
-            await self.cog._post_in_origin_channel(self.origin_channel_id, f"🚫 Sub request rejected by {approver.mention}.")
-            await self._finalize_buttons(interaction, f"🚫 Rejected by {approver.mention}")
-
     # ---------------------------
     # /sub command
     # ---------------------------
     @app_commands.command(
         name="sub",
-        description="Request to temporarily sub in a Free Agent until Sunday 11:59pm ET (requires Admin Approval)."
+        description="Request to sign a Free Agent on a temporary sub deal until Sunday 11:59pm ET (Admin Approval)."
     )
     @app_commands.guild_only()
-    async def sub(self, interaction: Interaction, player1: discord.Member):
+    @app_commands.describe(
+        player1="Player being subbed (must be on your team)",
+        player2="Player subbing in (must be a Free Agent)"
+    )
+    async def sub(self, interaction: Interaction, player1: discord.Member, player2: discord.Member):
         step = "START"
         try:
             step = "DEFER"
             await interaction.response.defer(ephemeral=True)
 
-            # Env validation
+            # --- Env validation ---
             step = "ENV_VALIDATE"
             if not self.captains_role_id:
                 await interaction.followup.send("❌ CAPTAINS_ROLE_ID is missing/invalid in .env", ephemeral=True)
@@ -443,7 +644,7 @@ class Sub(commands.Cog):
                 await interaction.followup.send("❌ ADMINS_ROLE_ID is missing/invalid in .env", ephemeral=True)
                 return
 
-            # Captain-only
+            # --- Captain-only restriction ---
             step = "CAPTAIN_CHECK"
             if not isinstance(interaction.user, discord.Member):
                 await interaction.followup.send("❌ This command must be used in a server.", ephemeral=True)
@@ -452,7 +653,7 @@ class Sub(commands.Cog):
                 await interaction.followup.send("🚫 Only captains can use this command.", ephemeral=True)
                 return
 
-            # Category lock
+            # --- Category lock restriction ---
             step = "CATEGORY_CHECK"
             channel = interaction.channel
             if not isinstance(channel, (discord.TextChannel, discord.Thread)):
@@ -466,11 +667,16 @@ class Sub(commands.Cog):
 
             origin_channel_id = base_channel.id
 
-            # Determine end time (upcoming Sunday 11:59pm ET)
-            now_et = datetime.now(EASTERN)
-            end_dt_et = _next_sunday_2359(now_et)
+            # Avoid nonsense (same member)
+            if player1.id == player2.id:
+                await interaction.followup.send("🚫 player1 and player2 cannot be the same person.", ephemeral=True)
+                return
 
-            # Open sheet + validate captain team + player is Free Agent
+            # Determine expiration (upcoming Sunday 11:59pm ET)
+            now_et = datetime.now(EASTERN)
+            expires_at = _next_sunday_2359(now_et)
+
+            # --- Open worksheet and validate state BEFORE posting pending request ---
             step = "OPEN_SHEET"
             ws = self._open_worksheet()
 
@@ -480,41 +686,58 @@ class Sub(commands.Cog):
                 await interaction.followup.send("❌ Worksheet is empty.", ephemeral=True)
                 return
 
-            # captain row + team
+            # Captain row + team
             step = "FIND_CAPTAIN_ROW"
-            captain_row_index = self._find_row_index_by_discord_id(values, interaction.user.id)
-            if not captain_row_index:
+            captain_row = self._find_row_index_by_discord_id(values, interaction.user.id)
+            if not captain_row:
                 await interaction.followup.send("❌ You (captain) are not found in the Google Sheet (Column A).", ephemeral=True)
                 return
 
-            captain_team = self._get_team_from_row(values, captain_row_index)
+            captain_team = self._get_team_from_row(values, captain_row)
             if not captain_team:
                 await interaction.followup.send("❌ Your team name is blank in Column D for your row in the Google Sheet.", ephemeral=True)
                 return
 
-            # Ensure team role exists in TEAM_INFO
+            # Team role must exist (since we will assign it)
+            step = "TEAM_ROLE_VALIDATE"
             team_role_id = _get_team_role_id(captain_team)
             if not team_role_id:
                 await interaction.followup.send(f"❌ TEAM_INFO is missing a valid role `id` for your team: **{captain_team}**.", ephemeral=True)
                 return
 
-            # Player must exist + be Free Agent
-            step = "FIND_PLAYER_ROW"
-            player_row_index = self._find_row_index_by_discord_id(values, player1.id)
-            if not player_row_index:
+            # Player1 must be on captain team
+            step = "FIND_PLAYER1_ROW"
+            p1_row = self._find_row_index_by_discord_id(values, player1.id)
+            if not p1_row:
                 await interaction.followup.send(f"❌ `{player1.display_name}` is not found in the Google Sheet (Column A).", ephemeral=True)
                 return
 
-            player_team_value = self._get_team_from_row(values, player_row_index)
-            step = "VALIDATE_FREE_AGENT"
-            if not _is_free_agent(player_team_value):
+            p1_team = self._get_team_from_row(values, p1_row)
+            step = "VALIDATE_PLAYER1_TEAM"
+            if _normalize(p1_team) != _normalize(captain_team):
                 await interaction.followup.send(
-                    f"🚫 Cannot sub {player1.mention}. They are currently on **{player_team_value or 'Unknown'}**.",
+                    f"🚫 You can only sub in place of someone on your own team. {player1.mention} is currently on **{p1_team or 'Unknown'}**.",
                     ephemeral=True
                 )
                 return
 
-            # Post pending messages
+            # Player2 must be Free Agent
+            step = "FIND_PLAYER2_ROW"
+            p2_row = self._find_row_index_by_discord_id(values, player2.id)
+            if not p2_row:
+                await interaction.followup.send(f"❌ `{player2.display_name}` is not found in the Google Sheet (Column A).", ephemeral=True)
+                return
+
+            p2_team = self._get_team_from_row(values, p2_row)
+            step = "VALIDATE_PLAYER2_FREE_AGENT"
+            if not _is_free_agent(p2_team):
+                await interaction.followup.send(
+                    f"🚫 {player2.mention} is not a Free Agent. They are currently on **{p2_team or 'Unknown'}**.",
+                    ephemeral=True
+                )
+                return
+
+            # ---- Passed checks: post pending messages ----
             step = "POST_PENDING_ORIGIN"
             await base_channel.send('Your transaction is pending "Admin Approval"')
 
@@ -529,21 +752,24 @@ class Sub(commands.Cog):
                 origin_channel_id=origin_channel_id,
                 captain_id=interaction.user.id,
                 captain_team=captain_team,
-                player_id=player1.id,
-                player_display=player1.display_name,
-                end_dt_et=end_dt_et
+                player1_id=player1.id,
+                player1_display=player1.display_name,
+                player2_id=player2.id,
+                player2_display=player2.display_name,
+                expires_at=expires_at
             )
 
             admins_role_mention = f"<@&{self.admins_role_id}>"
-            end_display = end_dt_et.strftime("%a %b %-d, %-I:%M %p ET") if os.name != "nt" else end_dt_et.strftime("%a %b %d, %I:%M %p ET")
 
+            # Admin pending message should “stick around” like /add and /drop:
+            # (The buttons message stays; we edit it to Approved/Rejected and disable buttons.)
             await pending_channel.send(
                 content=(
                     f"{admins_role_mention} **Pending Sub Request**\n"
                     f"Captain: {interaction.user.mention}\n"
                     f"Team (from sheet): **{captain_team}**\n"
-                    f"Sub In: {player1.mention}\n"
-                    f"Expires: **{end_display}**\n"
+                    f"Player being subbed: {player1.mention}\n"
+                    f"Player subbing in: {player2.mention}\n"
                     f"Origin channel: <#{origin_channel_id}>"
                 ),
                 allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
