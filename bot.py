@@ -136,8 +136,8 @@ async def main():
             "cogs.confirm",         # Confirm proposed Match Day and Time
             "cogs.refresh",         # Refreshes the .csv to match the Google Sheet
             # "cogs.transactions"
-            "cogs.add"             # Adds player into roster spot
-            # "cogs.drop",            # Removed player from roster spot
+            "cogs.add",             # Adds player into roster spot
+            "cogs.drop"            # Removed player from roster spot
             # "cogs.sub"              # Applies Team role for certain duration
 
         ]:
