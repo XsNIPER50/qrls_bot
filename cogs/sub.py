@@ -353,7 +353,7 @@ class Sub(commands.Cog):
 
                 if isinstance(player_member, discord.Member):
                     try:
-                        await self.cog._post_transaction_log(self.captain_team, player_member, self.end_dt_et)
+                        await self.cog._post_transaction_log(self.captain_team, player_member)
                     except Exception as e:
                         logger.error("Sub transaction log post failed: %r", e)
                         traceback.print_exc()
