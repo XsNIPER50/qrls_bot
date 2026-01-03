@@ -137,8 +137,8 @@ async def main():
             "cogs.refresh",         # Refreshes the .csv to match the Google Sheet
             # "cogs.transactions"
             "cogs.add",             # Adds player into roster spot
-            "cogs.drop"            # Removed player from roster spot
-            # "cogs.sub"              # Applies Team role for certain duration
+            "cogs.drop",            # Removed player from roster spot
+            "cogs.sub"              # Applies Team role for certain duration
 
         ]:
             try:
