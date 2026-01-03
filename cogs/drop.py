@@ -144,10 +144,16 @@ class Drop(commands.Cog):
         if isinstance(ch, discord.TextChannel):
             await ch.send(message)
 
-    async def _post_transaction_log(self, team_name: str, player_member: Optional[discord.Member], player_display: str):
+    async def _post_transaction_log(
+        self,
+        team_name: str,
+        player_member: Optional[discord.Member],
+        player_display: str
+    ):
         """
         Post to TRANSACTIONS_CHANNEL_ID after a fully successful transaction (sheet updated).
-        Message format: "[Team Name] drops [player1] to 2 Day Waivers."
+        Message format:
+        "@TeamRole drops @player to 2 Day Waivers."
         """
         if not self.transactions_channel_id:
             logger.warning("TRANSACTIONS_CHANNEL_ID missing/invalid; skipping transaction log post.")
@@ -158,8 +164,23 @@ class Drop(commands.Cog):
             logger.warning("TRANSACTIONS_CHANNEL_ID does not resolve to a text channel; skipping.")
             return
 
-        player_text = player_member.mention if isinstance(player_member, discord.Member) else player_display
-        await ch.send(f"**{team_name}** drops {player_text} to **2 Day Waivers**.")
+        # Team role mention (preferred)
+        team_role_id = _get_team_role_id(team_name)
+        if team_role_id:
+            team_text = f"<@&{team_role_id}>"
+        else:
+            logger.warning("No role ID found for team '%s'; falling back to text.", team_name)
+            team_text = f"**{team_name}**"
+
+        # Player mention
+        player_text = (
+            player_member.mention
+            if isinstance(player_member, discord.Member)
+            else player_display
+        )
+
+        await ch.send(f"{team_text} drops {player_text} to **2 Day Waivers**.")
+
 
     async def _apply_discord_roles_after_approval(
         self,
