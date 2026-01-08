@@ -6,6 +6,7 @@ import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
 from dotenv import load_dotenv
+from datetime import datetime, timedelta, timezone
 
 # Optional: reuse cooldowns if desired
 try:
@@ -25,6 +26,8 @@ PROPOSALS_FILE = os.path.join(DATA_DIR, "proposals.json")
 
 # Fallback name (only used if SCHED_CATEGORY_ID not provided)
 SCHED_CATEGORY_NAME = "Scheduling Channel"
+
+TWO_WEEKS = timedelta(days=14)
 
 
 def ensure_data_file():
@@ -60,14 +63,44 @@ def user_is_admin_or_captain(member: discord.Member) -> bool:
     return False
 
 
+def _validate_unix_time(unix_time: int) -> Optional[str]:
+    """
+    Validates:
+      - unix_time is plausibly epoch seconds
+      - is in the future
+      - is within 14 days from now (UTC)
+    Returns an error string if invalid, otherwise None.
+    """
+    # Basic plausibility check (epoch seconds; typically 10 digits in modern dates)
+    # Keep this permissive but block obviously wrong values.
+    if unix_time < 1_000_000_000 or unix_time > 9_999_999_999:
+        return "❌ Invalid Unix time. Please paste the **Unix seconds** value from hammertime.cyou/en (example: `1767813000`)."
+
+    now = datetime.now(timezone.utc)
+    proposed = datetime.fromtimestamp(unix_time, tz=timezone.utc)
+
+    if proposed <= now:
+        return "❌ That proposed time is in the past. Please choose a future time."
+
+    if proposed > (now + TWO_WEEKS):
+        return "❌ That proposed time is more than **2 weeks** from now. Please choose a time within the next **14 days**."
+
+    return None
+
+
 class ProposeConfirmView(discord.ui.View):
     """Confirmation buttons for a proposed time/date."""
 
-    def __init__(self, when_text: str, author: discord.Member):
+    def __init__(self, unix_time: int, author: discord.Member):
         super().__init__(timeout=60)
-        self.when_text = when_text
+        self.unix_time = unix_time
         self.author = author
         self.result: Optional[bool] = None
+
+    @property
+    def when_display(self) -> str:
+        # Discord will render this nicely for each user’s locale.
+        return f"<t:{self.unix_time}:F>"
 
     async def interaction_check(self, interaction: Interaction) -> bool:
         if interaction.user.id != self.author.id:
@@ -84,17 +117,35 @@ class ProposeConfirmView(discord.ui.View):
 
         proposals = load_proposals()
         proposals[str(interaction.channel.id)] = {
-            "when": self.when_text,
+            "when": self.when_display,          # keep for backward compatibility with any readers
+            "unix_time": self.unix_time,        # store the raw epoch too (useful later)
             "proposer_id": interaction.user.id
         }
         save_proposals(proposals)
 
+        # ✅ Ping captains OUTSIDE the embed so the role actually pings
+        allowed_mentions = discord.AllowedMentions(roles=True, users=True, everyone=False)
+
+        captains_role = None
+        if interaction.guild and CAPTAINS_ROLE_ID:
+            captains_role = interaction.guild.get_role(CAPTAINS_ROLE_ID)
+
+        if captains_role:
+            await interaction.followup.send(
+                content=f"{captains_role.mention} — A match time has been proposed.",
+                allowed_mentions=allowed_mentions
+            )
+        else:
+            await interaction.followup.send(
+                content="@Captains — A match time has been proposed."
+            )
+
         embed = discord.Embed(
             title="📌 Proposed Match Time",
-            description=f"**{interaction.user.mention}** proposed:\n`{self.when_text}`",
+            description=f"**{interaction.user.mention}** proposed:\n{self.when_display}",
             color=discord.Color.gold()
         )
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, allowed_mentions=allowed_mentions)
 
         self.result = True
         self.stop()
@@ -142,8 +193,8 @@ class Propose(commands.Cog):
         name="propose",
         description="Propose a match time in this scheduling channel (Admins & Captains only)."
     )
-    @app_commands.describe(when="Enter a date/time, e.g. '10/25 8:00pm'")
-    async def propose(self, interaction: Interaction, when: str):
+    @app_commands.describe(unix_time="Use a Unix time from hammertime.cyou/en to propose a time")
+    async def propose(self, interaction: Interaction, unix_time: int):
         if not await check_cooldown(interaction):
             return
 
@@ -153,10 +204,16 @@ class Propose(commands.Cog):
             await interaction.response.send_message(error, ephemeral=True)
             return
 
+        # Validate unix time (future + within 14 days)
+        unix_error = _validate_unix_time(unix_time)
+        if unix_error:
+            await interaction.response.send_message(unix_error, ephemeral=True)
+            return
+
         # Show confirm/cancel buttons to proposer
-        view = ProposeConfirmView(when_text=when, author=interaction.user)
+        view = ProposeConfirmView(unix_time=unix_time, author=interaction.user)
         await interaction.response.send_message(
-            f"📝 You entered: `{when}`\nPlease confirm your proposal:",
+            f"📝 You entered: {view.when_display}\nPlease confirm your proposal:",
             view=view,
             ephemeral=True
         )
@@ -168,3 +225,4 @@ class Propose(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Propose(bot))
+    
