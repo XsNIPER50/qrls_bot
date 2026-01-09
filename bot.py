@@ -138,7 +138,8 @@ async def main():
             # "cogs.transactions"
             "cogs.add",             # Adds player into roster spot
             "cogs.drop",            # Removed player from roster spot
-            "cogs.sub"              # Applies Team role for certain duration
+            "cogs.sub",             # Applies Team role for certain duration
+            "cogs.trade"            # Adds opposing captain to chat and initiates the trade
 
         ]:
             try:
