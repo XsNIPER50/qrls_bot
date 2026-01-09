@@ -1,12 +1,14 @@
 import json
 import os
+import re
+from datetime import datetime, timedelta
 from typing import Optional
 
 import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
 from dotenv import load_dotenv
-from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 # Optional: reuse cooldowns if desired
 try:
@@ -27,7 +29,11 @@ PROPOSALS_FILE = os.path.join(DATA_DIR, "proposals.json")
 # Fallback name (only used if SCHED_CATEGORY_ID not provided)
 SCHED_CATEGORY_NAME = "Scheduling Channel"
 
+ET_TZ = ZoneInfo("America/New_York")
 TWO_WEEKS = timedelta(days=14)
+
+DATE_RE = re.compile(r"^\s*(\d{1,2})/(\d{1,2})\s*$")  # M/D or MM/DD
+TIME_RE = re.compile(r"^\s*(1[0-2]|0?[1-9])(?:\:([0-5]\d))?\s*([ap]m)\s*$", re.IGNORECASE)
 
 
 def ensure_data_file():
@@ -63,44 +69,79 @@ def user_is_admin_or_captain(member: discord.Member) -> bool:
     return False
 
 
-def _validate_unix_time(unix_time: int) -> Optional[str]:
+def parse_et_datetime(date_str: str, time_str: str) -> tuple[Optional[datetime], Optional[str]]:
     """
-    Validates:
-      - unix_time is plausibly epoch seconds
-      - is in the future
-      - is within 14 days from now (UTC)
-    Returns an error string if invalid, otherwise None.
+    Parses:
+      date_str: M/D or MM/DD
+      time_str: H(am/pm) or H:MM(am/pm)
+    Returns (dt_et, error_message).
     """
-    # Basic plausibility check (epoch seconds; typically 10 digits in modern dates)
-    # Keep this permissive but block obviously wrong values.
-    if unix_time < 1_000_000_000 or unix_time > 9_999_999_999:
-        return "❌ Invalid Unix time. Please paste the **Unix seconds** value from hammertime.cyou/en (example: `1767813000`)."
+    dm = DATE_RE.match(date_str or "")
+    if not dm:
+        return None, "❌ Invalid date format. Use **M/D** (examples: `1/12`, `12/3`)."
 
-    now = datetime.now(timezone.utc)
-    proposed = datetime.fromtimestamp(unix_time, tz=timezone.utc)
+    month = int(dm.group(1))
+    day = int(dm.group(2))
+    if not (1 <= month <= 12):
+        return None, "❌ Month must be between 1 and 12."
+    if not (1 <= day <= 31):
+        return None, "❌ Day must be between 1 and 31."
 
-    if proposed <= now:
-        return "❌ That proposed time is in the past. Please choose a future time."
+    tm = TIME_RE.match(time_str or "")
+    if not tm:
+        return None, "❌ Invalid time format. Use **H[:MM]am/pm** in **EST/ET** (examples: `8pm`, `8:00pm`, `11:15am`)."
 
-    if proposed > (now + TWO_WEEKS):
-        return "❌ That proposed time is more than **2 weeks** from now. Please choose a time within the next **14 days**."
+    hour12 = int(tm.group(1))
+    minute = int(tm.group(2) or "0")
+    ampm = tm.group(3).lower()
 
-    return None
+    hour24 = hour12 % 12
+    if ampm == "pm":
+        hour24 += 12
+
+    now_et = datetime.now(ET_TZ)
+    year = now_et.year
+
+    # Build ET datetime (no year provided; assume current year)
+    try:
+        dt_et = datetime(year, month, day, hour24, minute, tzinfo=ET_TZ)
+    except ValueError:
+        return None, "❌ That date/time isn’t a valid calendar date."
+
+    # Reject past
+    if dt_et <= now_et:
+        return None, "❌ That proposed time is in the past (EST/ET). Please choose a future time."
+
+    # Only within 14 days
+    if dt_et > (now_et + TWO_WEEKS):
+        return None, "❌ That proposed time is more than **2 weeks** from now. Please choose a time within the next **14 days**."
+
+    return dt_et, None
+
+
+def format_dt_et(dt_et: datetime) -> str:
+    # Display: M/D h:mm AM/PM ET
+    # (strftime on Windows may not support %-m / %-I; do it manually)
+    month = dt_et.month
+    day = dt_et.day
+    hour = dt_et.hour
+    minute = dt_et.minute
+    ampm = "AM" if hour < 12 else "PM"
+    hour12 = hour % 12
+    if hour12 == 0:
+        hour12 = 12
+    return f"{month}/{day} {hour12}:{minute:02d}{ampm} ET"
 
 
 class ProposeConfirmView(discord.ui.View):
     """Confirmation buttons for a proposed time/date."""
 
-    def __init__(self, unix_time: int, author: discord.Member):
+    def __init__(self, dt_iso: str, display_text: str, author: discord.Member):
         super().__init__(timeout=60)
-        self.unix_time = unix_time
+        self.dt_iso = dt_iso
+        self.display_text = display_text
         self.author = author
         self.result: Optional[bool] = None
-
-    @property
-    def when_display(self) -> str:
-        # Discord will render this nicely for each user’s locale.
-        return f"<t:{self.unix_time}:F>"
 
     async def interaction_check(self, interaction: Interaction) -> bool:
         if interaction.user.id != self.author.id:
@@ -117,8 +158,8 @@ class ProposeConfirmView(discord.ui.View):
 
         proposals = load_proposals()
         proposals[str(interaction.channel.id)] = {
-            "when": self.when_display,          # keep for backward compatibility with any readers
-            "unix_time": self.unix_time,        # store the raw epoch too (useful later)
+            "dt_iso": self.dt_iso,               # canonical
+            "display": self.display_text,        # nice text
             "proposer_id": interaction.user.id
         }
         save_proposals(proposals)
@@ -136,13 +177,11 @@ class ProposeConfirmView(discord.ui.View):
                 allowed_mentions=allowed_mentions
             )
         else:
-            await interaction.followup.send(
-                content="@Captains — A match time has been proposed."
-            )
+            await interaction.followup.send(content="@Captains — A match time has been proposed.")
 
         embed = discord.Embed(
             title="📌 Proposed Match Time",
-            description=f"**{interaction.user.mention}** proposed:\n{self.when_display}",
+            description=f"**{interaction.user.mention}** proposed:\n**{self.display_text}**",
             color=discord.Color.gold()
         )
         await interaction.followup.send(embed=embed, allowed_mentions=allowed_mentions)
@@ -171,12 +210,10 @@ class Propose(commands.Cog):
         category = interaction.channel.category
         if SCHED_CATEGORY_ID:
             if not category or category.id != SCHED_CATEGORY_ID:
-                # Try to show the intended category name if we can resolve it
                 target_cat = interaction.guild.get_channel(SCHED_CATEGORY_ID)
                 target_name = target_cat.name if target_cat else "the configured Scheduling category"
                 return f"❌ This command can only be used in **{target_name}**."
         else:
-            # Fallback to name check if ID not configured
             if not category or category.name != SCHED_CATEGORY_NAME:
                 return f"❌ This command can only be used in the **{SCHED_CATEGORY_NAME}** category."
 
@@ -193,27 +230,29 @@ class Propose(commands.Cog):
         name="propose",
         description="Propose a match time in this scheduling channel (Admins & Captains only)."
     )
-    @app_commands.describe(unix_time="Use a Unix time from hammertime.cyou/en to propose a time")
-    async def propose(self, interaction: Interaction, unix_time: int):
+    @app_commands.describe(
+        date="Date in M/D format (example: 1/12 or 12/3)",
+        time="Time in EST/ET (example: 8pm or 8:00pm)"
+    )
+    async def propose(self, interaction: Interaction, date: str, time: str):
         if not await check_cooldown(interaction):
             return
 
-        # Check location + permissions
         error = await self._check_permissions_and_location(interaction)
         if error:
             await interaction.response.send_message(error, ephemeral=True)
             return
 
-        # Validate unix time (future + within 14 days)
-        unix_error = _validate_unix_time(unix_time)
-        if unix_error:
-            await interaction.response.send_message(unix_error, ephemeral=True)
+        dt_et, parse_err = parse_et_datetime(date, time)
+        if parse_err:
+            await interaction.response.send_message(parse_err, ephemeral=True)
             return
 
-        # Show confirm/cancel buttons to proposer
-        view = ProposeConfirmView(unix_time=unix_time, author=interaction.user)
+        display = format_dt_et(dt_et)
+        view = ProposeConfirmView(dt_iso=dt_et.isoformat(), display_text=display, author=interaction.user)
+
         await interaction.response.send_message(
-            f"📝 You entered: {view.when_display}\nPlease confirm your proposal:",
+            f"📝 You entered: **{display}**\nPlease confirm your proposal:",
             view=view,
             ephemeral=True
         )
@@ -225,4 +264,3 @@ class Propose(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Propose(bot))
-    

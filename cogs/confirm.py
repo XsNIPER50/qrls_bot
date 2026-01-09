@@ -1,20 +1,21 @@
 import json
 import os
 from typing import Optional
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+import re
 
 import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
 from utils.team_info import TEAM_INFO
 from dotenv import load_dotenv
-import re
-from datetime import datetime, timedelta, timezone
 
 # ✅ Load environment variables
 load_dotenv()
 ADMINS_ROLE_ID = int(os.getenv("ADMINS_ROLE_ID", 0))
 CAPTAINS_ROLE_ID = int(os.getenv("CAPTAINS_ROLE_ID", 0))
-SCHED_CATEGORY_ID = int(os.getenv("SCHED_CATEGORY_ID", 0))  # 👈 category ID from .env
+SCHED_CATEGORY_ID = int(os.getenv("SCHED_CATEGORY_ID", 0))
 
 DATA_DIR = "data"
 PROPOSALS_FILE = os.path.join(DATA_DIR, "proposals.json")
@@ -22,10 +23,11 @@ SCHED_CATEGORY_NAME = "Scheduling Channel"
 SCHED_RESULTS_CHANNEL = "💥・scheduling"
 SCHEDULED_MATCHES_CHANNEL = "scheduled-matches"
 
+ET_TZ = ZoneInfo("America/New_York")
 TWO_WEEKS = timedelta(days=14)
 
-# Accept legacy stored "when" values like "<t:1234567890:F>"
-TS_RE = re.compile(r"<t:(\d{9,12})(?::[a-zA-Z])?>")
+DATE_RE = re.compile(r"^\s*(\d{1,2})/(\d{1,2})\s*$")  # M/D or MM/DD
+TIME_RE = re.compile(r"^\s*(1[0-2]|0?[1-9])(?:\:([0-5]\d))?\s*([ap]m)\s*$", re.IGNORECASE)
 
 
 def load_proposals() -> dict:
@@ -45,7 +47,6 @@ def save_proposals(data: dict):
 
 
 def user_is_admin_or_captain(member: discord.Member) -> bool:
-    """Check if a member is an Admin or Captain using role IDs from .env"""
     if member.guild_permissions.administrator:
         return True
     if ADMINS_ROLE_ID and discord.utils.get(member.roles, id=ADMINS_ROLE_ID):
@@ -55,48 +56,57 @@ def user_is_admin_or_captain(member: discord.Member) -> bool:
     return False
 
 
-def _validate_unix_time(unix_time: int) -> Optional[str]:
-    """
-    Validates:
-      - unix_time is plausibly epoch seconds
-      - is in the future
-      - is within 14 days from now (UTC)
-    Returns an error string if invalid, otherwise None.
-    """
-    if unix_time < 1_000_000_000 or unix_time > 9_999_999_999:
-        return "❌ Invalid Unix time. Please paste the **Unix seconds** value from hammertime.cyou/en (example: `1767813000`)."
+def parse_et_datetime(date_str: str, time_str: str) -> tuple[Optional[datetime], Optional[str]]:
+    dm = DATE_RE.match(date_str or "")
+    if not dm:
+        return None, "❌ Invalid date format. Use **M/D** (examples: `1/12`, `12/3`)."
 
-    now = datetime.now(timezone.utc)
-    proposed = datetime.fromtimestamp(unix_time, tz=timezone.utc)
+    month = int(dm.group(1))
+    day = int(dm.group(2))
+    if not (1 <= month <= 12):
+        return None, "❌ Month must be between 1 and 12."
+    if not (1 <= day <= 31):
+        return None, "❌ Day must be between 1 and 31."
 
-    if proposed <= now:
-        return "❌ That confirmed time is in the past. Please choose a future time."
+    tm = TIME_RE.match(time_str or "")
+    if not tm:
+        return None, "❌ Invalid time format. Use **H[:MM]am/pm** in **EST/ET** (examples: `8pm`, `8:00pm`, `11:15am`)."
 
-    if proposed > (now + TWO_WEEKS):
-        return "❌ That confirmed time is more than **2 weeks** from now. Please choose a time within the next **14 days**."
+    hour12 = int(tm.group(1))
+    minute = int(tm.group(2) or "0")
+    ampm = tm.group(3).lower()
 
-    return None
+    hour24 = hour12 % 12
+    if ampm == "pm":
+        hour24 += 12
+
+    now_et = datetime.now(ET_TZ)
+    year = now_et.year
+
+    try:
+        dt_et = datetime(year, month, day, hour24, minute, tzinfo=ET_TZ)
+    except ValueError:
+        return None, "❌ That date/time isn’t a valid calendar date."
+
+    if dt_et <= now_et:
+        return None, "❌ That time is in the past (EST/ET). Please choose a future time."
+
+    if dt_et > (now_et + TWO_WEEKS):
+        return None, "❌ That time is more than **2 weeks** from now. Please choose a time within the next **14 days**."
+
+    return dt_et, None
 
 
-def _proposal_unix_from_record(proposal: dict) -> Optional[int]:
-    """
-    Supports both:
-      - new format: {"unix_time": 123..., "when": "<t:...:F>", ...}
-      - legacy format: {"when": "<t:123...:F>" OR "10/25 8:00pm", ...}
-    """
-    ut = proposal.get("unix_time")
-    if isinstance(ut, int):
-        return ut
-    if isinstance(ut, str) and ut.isdigit():
-        return int(ut)
-
-    when = proposal.get("when")
-    if isinstance(when, str):
-        m = TS_RE.search(when)
-        if m:
-            return int(m.group(1))
-
-    return None
+def format_dt_et(dt_et: datetime) -> str:
+    month = dt_et.month
+    day = dt_et.day
+    hour = dt_et.hour
+    minute = dt_et.minute
+    ampm = "AM" if hour < 12 else "PM"
+    hour12 = hour % 12
+    if hour12 == 0:
+        hour12 = 12
+    return f"{month}/{day} {hour12}:{minute:02d}{ampm} ET"
 
 
 class Confirm(commands.Cog):
@@ -104,7 +114,6 @@ class Confirm(commands.Cog):
         self.bot = bot
 
     async def _check_permissions_and_location(self, interaction: Interaction) -> Optional[str]:
-        """Ensures the command is used inside the proper Scheduling category."""
         if not interaction.channel or not isinstance(interaction.channel, discord.TextChannel):
             return "❌ This command must be used in a text channel."
 
@@ -115,7 +124,6 @@ class Confirm(commands.Cog):
                 target_name = target_cat.name if target_cat else "the configured Scheduling category"
                 return f"❌ This command can only be used in **{target_name}**."
         else:
-            # fallback if ID not set
             if not category or category.name != SCHED_CATEGORY_NAME:
                 return f"❌ This command can only be used in the **{SCHED_CATEGORY_NAME}** category."
 
@@ -124,26 +132,28 @@ class Confirm(commands.Cog):
             return "❌ Could not determine your member information."
         if not user_is_admin_or_captain(member):
             return "🚫 Only Admins or Captains can use this command."
+
         return None
 
     @app_commands.command(
         name="confirm",
         description="Confirm a previously proposed match time (Admins & Captains only)."
     )
-    @app_commands.describe(unix_time="Use a Unix time from hammertime.cyou/en to confirm the proposed time")
-    async def confirm(self, interaction: Interaction, unix_time: int):
+    @app_commands.describe(
+        date="Date in M/D format (example: 1/12 or 12/3)",
+        time="Time in EST/ET (example: 8pm or 8:00pm)"
+    )
+    async def confirm(self, interaction: Interaction, date: str, time: str):
         await interaction.response.defer(ephemeral=False)
 
-        # --- Permission & category checks ---
         error = await self._check_permissions_and_location(interaction)
         if error:
             await interaction.followup.send(error)
             return
 
-        # Validate unix time (future + within 14 days)
-        unix_error = _validate_unix_time(unix_time)
-        if unix_error:
-            await interaction.followup.send(unix_error)
+        dt_et, parse_err = parse_et_datetime(date, time)
+        if parse_err:
+            await interaction.followup.send(parse_err)
             return
 
         proposals = load_proposals()
@@ -156,17 +166,26 @@ class Confirm(commands.Cog):
         proposal = proposals[ch_id]
         proposer_id = proposal.get("proposer_id")
 
-        # Pull unix from proposal (supports new + legacy)
-        proposed_unix = _proposal_unix_from_record(proposal)
-        if not proposed_unix:
+        proposed_iso = proposal.get("dt_iso")
+        if not proposed_iso:
+            # Backward-compat message (in case older records exist)
             await interaction.followup.send(
-                "⚠️ The current proposal in this channel is not in Unix format. "
-                "Please have a captain/admin re-run /propose using Unix seconds."
+                "⚠️ This channel’s proposal is missing the stored time format. Please re-run **/propose**."
             )
             return
 
-        if proposed_unix != unix_time:
-            await interaction.followup.send("⚠️ The Unix time you entered does not match the current proposal.")
+        try:
+            proposed_dt = datetime.fromisoformat(proposed_iso)
+        except Exception:
+            await interaction.followup.send("⚠️ Proposal time data is corrupted. Please re-run **/propose**.")
+            return
+
+        # Ensure timezone (should be ET, but be safe)
+        if proposed_dt.tzinfo is None:
+            proposed_dt = proposed_dt.replace(tzinfo=ET_TZ)
+
+        if proposed_dt != dt_et:
+            await interaction.followup.send("⚠️ The date/time you entered does not match the current proposal.")
             return
 
         if interaction.user.id == proposer_id:
@@ -182,11 +201,10 @@ class Confirm(commands.Cog):
         raw_b = parts[1].replace("-", " ").title()
 
         def resolve_team_name(raw):
-            """Return the correct TEAM_INFO key based on fuzzy match."""
             for key in TEAM_INFO.keys():
                 if raw.lower() in key.lower():
                     return key
-            return raw  # fallback
+            return raw
 
         team_a = resolve_team_name(raw_a)
         team_b = resolve_team_name(raw_b)
@@ -199,19 +217,18 @@ class Confirm(commands.Cog):
         else:
             role_label = "Member"
 
-        when_display = f"<t:{unix_time}:F>"
+        display = format_dt_et(dt_et)
 
-        # --- Build public embed ---
         embed = discord.Embed(
             title="✅ Match Time Confirmed",
             description=(
-                f"**{when_display}** was proposed by {proposer_mention} "
+                f"**{display}** was proposed by {proposer_mention} "
                 f"and confirmed by {interaction.user.mention}."
             ),
             color=discord.Color.green()
         )
         embed.add_field(name="🏆 Matchup", value=f"**{team_a}** vs **{team_b}**", inline=False)
-        embed.add_field(name="🕒 Time", value=f"{when_display} (ET)", inline=True)
+        embed.add_field(name="🕒 Time", value=f"{display}", inline=True)
         embed.set_footer(text=f"Confirmed by {interaction.user.display_name} ({role_label})")
 
         # ✅ Ping captains OUTSIDE the embed so the role actually pings
@@ -236,13 +253,11 @@ class Confirm(commands.Cog):
         sched_channel = discord.utils.get(interaction.guild.text_channels, name=SCHED_RESULTS_CHANNEL)
         scheduled_matches_channel = discord.utils.get(interaction.guild.text_channels, name=SCHEDULED_MATCHES_CHANNEL)
 
-        # Get correct role mentions
         role_a = discord.utils.get(interaction.guild.roles, name=team_a)
         role_b = discord.utils.get(interaction.guild.roles, name=team_b)
         team_a_mention = role_a.mention if role_a else f"@{team_a}"
         team_b_mention = role_b.mention if role_b else f"@{team_b}"
 
-        # Get emoji from TEAM_INFO
         emoji_a_name = TEAM_INFO.get(team_a, {}).get("emoji", "")
         emoji_b_name = TEAM_INFO.get(team_b, {}).get("emoji", "")
 
@@ -252,17 +267,16 @@ class Confirm(commands.Cog):
         emoji_a_str = str(emoji_a_obj) if emoji_a_obj else (f":{emoji_a_name}:" if emoji_a_name else "")
         emoji_b_str = str(emoji_b_obj) if emoji_b_obj else (f":{emoji_b_name}:" if emoji_b_name else "")
 
-        msg = f"{emoji_a_str} {team_a_mention} vs {team_b_mention} {emoji_b_str} — {when_display} (ET)"
+        msg = f"{emoji_a_str} {team_a_mention} vs {team_b_mention} {emoji_b_str} — {display}"
 
         for channel in (sched_channel, scheduled_matches_channel):
             if channel:
                 sent_message = await channel.send(msg, allowed_mentions=allowed_mentions)
 
-                # 👇 Add reactions only to the scheduled-matches channel
                 if channel.name == SCHEDULED_MATCHES_CHANNEL:
                     try:
-                        await sent_message.add_reaction("🎙️")  # :microphone2:
-                        await sent_message.add_reaction("🎥")  # :movie_camera:
+                        await sent_message.add_reaction("🎙️")
+                        await sent_message.add_reaction("🎥")
                     except Exception as e:
                         print(f"⚠️ Failed to add reactions in {channel.name}: {e}")
 
