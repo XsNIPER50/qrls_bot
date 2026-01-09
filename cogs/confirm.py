@@ -21,7 +21,7 @@ DATA_DIR = "data"
 PROPOSALS_FILE = os.path.join(DATA_DIR, "proposals.json")
 SCHED_CATEGORY_NAME = "Scheduling Channel"
 SCHED_RESULTS_CHANNEL = "💥・scheduling"
-SCHEDULED_MATCHES_CHANNEL = "scheduled-matches"
+SCHEDULED_MATCHES_CHANNEL = "📜・scheduled-matches"
 
 ET_TZ = ZoneInfo("America/New_York")
 TWO_WEEKS = timedelta(days=14)
