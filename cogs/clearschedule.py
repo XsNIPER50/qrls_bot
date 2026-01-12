@@ -96,7 +96,7 @@ class ClearSchedule(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         guild = interaction.guild
-        category = discord.utils.get(guild.categories, name="----Scheduling----")
+        category = discord.utils.get(guild.categories, name="╭────Scheduling────╮")
 
         if not category:
             await interaction.followup.send("❌ No 'Scheduling Channel' category found.", ephemeral=True)
