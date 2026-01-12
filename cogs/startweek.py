@@ -92,7 +92,7 @@ class StartWeek(commands.Cog):
 
             # ---- Find/Create category ----
             step = "CATEGORY_LOOKUP"
-            category_name = "----Scheduling----"
+            category_name = "╭────Scheduling────╮"
             category = discord.utils.get(guild.categories, name=category_name)
             if not category:
                 step = "CATEGORY_CREATE"
