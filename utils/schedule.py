@@ -43,9 +43,10 @@ SCHEDULE = {
          
     21: [("Hammerheads", "Speed Demons"), ("Rangers", "Vibe Clan"), ("Clarity United", "Elite Ink"), 
          ("Three Rocketeers", "Armada"), ("Sappers", "Kings"), ("Cyclones", "Astro"), 
-         ("Arctic Assassins", "Bleacher Boys"), ("Spectres", "Mustangs")], #S11 PreSeason Torney Round 1
+         ("Arctic Assassins", "Bleacher Boys"), ("Spectres", "Mustangs")],              #S11 PreSeason Torney Round 1
 
-    22: [], #S11 PreSeason Torney Round 2 (Quarters)
+    22: [("Hammerheads","Mustangs"),("Armada","Sappers"),("Rangers","Arctic Assassins"),
+         ("Clarity United", "Astro")],                                                  #S11 PreSeason Torney Round 2 (Quarters)
 
     23: [], #S11 PreSeason Torney Round 3 (Semis)
 
