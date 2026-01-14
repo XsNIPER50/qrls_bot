@@ -68,6 +68,9 @@ class Trade(commands.Cog):
         self.pending_channel_id = _get_env_int("PENDING_TRANSACTIONS_CHANNEL_ID")
         self.transactions_category_id = _get_env_int("TRANSACTIONS_CATEGORY_ID")
 
+        # ✅ public log channel for completed transactions
+        self.transactions_channel_id = _get_env_int("TRANSACTIONS_CHANNEL_ID")
+
         self.sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
         self.sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
         self.worksheet_name = os.getenv("GOOGLE_WORKSHEET", "")
@@ -238,6 +241,41 @@ class Trade(commands.Cog):
             logger.error("Grant channel access failed: %r", e)
             traceback.print_exc()
             return False, "Unexpected error while updating channel permissions."
+
+    async def _post_trade_log(
+        self,
+        guild: discord.Guild,
+        team1_name: str,
+        team2_name: str,
+        player1_id: int,
+        player2_id: int
+    ):
+        """
+        Post to TRANSACTIONS_CHANNEL_ID after a fully successful trade (sheet updated).
+        Message format: "@Team1 trades @player1 to @Team2 for @player2"
+        """
+        if not self.transactions_channel_id:
+            logger.warning("TRANSACTIONS_CHANNEL_ID missing/invalid; skipping trade log post.")
+            return
+
+        ch = self.bot.get_channel(self.transactions_channel_id)
+        if not isinstance(ch, discord.TextChannel):
+            logger.warning("TRANSACTIONS_CHANNEL_ID does not resolve to a text channel; skipping.")
+            return
+
+        role1 = discord.utils.get(guild.roles, name=team1_name)
+        role2 = discord.utils.get(guild.roles, name=team2_name)
+
+        team1_mention = role1.mention if role1 else f"@{team1_name}"
+        team2_mention = role2.mention if role2 else f"@{team2_name}"
+
+        player1_mention = f"<@{player1_id}>"
+        player2_mention = f"<@{player2_id}>"
+
+        await ch.send(
+            f"{team1_mention} trades {player1_mention} to {team2_mention} for {player2_mention}",
+            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False)
+        )
 
     # ---------------------------
     # Captain Approval View
@@ -517,6 +555,20 @@ class Trade(commands.Cog):
                         f"🔧 {msg2}",
                         allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False)
                     )
+
+                # ✅ Post to TRANSACTIONS_CHANNEL_ID:
+                # "@Team1 trades @player1 to @Team2 for @player2"
+                try:
+                    await self.cog._post_trade_log(
+                        guild=guild,
+                        team1_name=self.expected_team1,
+                        team2_name=self.expected_team2,
+                        player1_id=self.player1_id,
+                        player2_id=self.player2_id
+                    )
+                except Exception as e:
+                    logger.error("Trade log post failed: %r", e)
+                    traceback.print_exc()
 
                 await interaction.followup.send("✅ Approved and applied.", ephemeral=True)
 
