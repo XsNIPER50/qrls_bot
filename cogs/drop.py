@@ -2,7 +2,8 @@ import os
 import json
 import logging
 import traceback
-from typing import Optional
+from typing import Optional, Dict, Any
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands, Interaction
@@ -26,6 +27,10 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 
 
+DATA_DIR = "data"
+WAIVERS_FILE = os.path.join(DATA_DIR, "waivers.json")
+
+
 def _get_env_int(name: str) -> Optional[int]:
     v = os.getenv(name)
     if not v:
@@ -40,10 +45,6 @@ def _normalize(s: str) -> str:
     return (s or "").strip()
 
 
-def _is_free_agent(value: str) -> bool:
-    return _normalize(value).lower() == "free agent"
-
-
 def _get_team_role_id(team_name: str) -> Optional[int]:
     info = TEAM_INFO.get(team_name)
     if not isinstance(info, dict):
@@ -54,6 +55,17 @@ def _get_team_role_id(team_name: str) -> Optional[int]:
     if isinstance(role_id, str) and role_id.isdigit():
         return int(role_id)
     return None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_iso_dt(value: str) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(value)
+    except Exception:
+        return None
 
 
 class Drop(commands.Cog):
@@ -68,6 +80,9 @@ class Drop(commands.Cog):
 
         self.transactions_channel_id = _get_env_int("TRANSACTIONS_CHANNEL_ID")
 
+        # Waivers role is not a team role, so keep it in .env
+        self.waivers_role_id = _get_env_int("WAIVERS_ROLE_ID")
+
         self.sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
         self.sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
         self.worksheet_name = os.getenv("GOOGLE_WORKSHEET", "")
@@ -75,6 +90,8 @@ class Drop(commands.Cog):
         # Sheet columns: A=Discord ID, D=Team
         self.COL_DISCORD_ID = 0
         self.COL_TEAM = 3
+
+        os.makedirs(DATA_DIR, exist_ok=True)
 
     # ---------------------------
     # Helpers
@@ -164,7 +181,6 @@ class Drop(commands.Cog):
             logger.warning("TRANSACTIONS_CHANNEL_ID does not resolve to a text channel; skipping.")
             return
 
-        # Team role mention (preferred)
         team_role_id = _get_team_role_id(team_name)
         if team_role_id:
             team_text = f"<@&{team_role_id}>"
@@ -172,7 +188,6 @@ class Drop(commands.Cog):
             logger.warning("No role ID found for team '%s'; falling back to text.", team_name)
             team_text = f"**{team_name}**"
 
-        # Player mention
         player_text = (
             player_member.mention
             if isinstance(player_member, discord.Member)
@@ -181,6 +196,54 @@ class Drop(commands.Cog):
 
         await ch.send(f"{team_text} drops {player_text} to **2 Day Waivers**.")
 
+    def _load_waivers_json(self) -> Dict[str, Any]:
+        try:
+            if not os.path.exists(WAIVERS_FILE):
+                return {}
+            with open(WAIVERS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.error("Failed to read %s: %r", WAIVERS_FILE, e)
+            return {}
+
+    def _save_waivers_json(self, data: Dict[str, Any]) -> None:
+        try:
+            tmp = WAIVERS_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, sort_keys=True)
+            os.replace(tmp, WAIVERS_FILE)
+        except Exception as e:
+            logger.error("Failed to write %s: %r", WAIVERS_FILE, e)
+
+    def _record_waiver(
+        self,
+        guild_id: int,
+        player_id: int,
+        requested_at_iso: str,
+        expires_at_iso: str,
+        original_team: str,
+        dropped_by_id: int,
+    ) -> None:
+        """
+        Create/overwrite the waiver record for this player.
+        Note: waiverclaim.py will own expiry + claim logic, so we only store timing + origin team.
+        """
+        data = self._load_waivers_json()
+        key = str(player_id)
+        data[key] = {
+            "guild_id": guild_id,
+            "player_id": player_id,
+            "requested_at": requested_at_iso,
+            "expires_at": expires_at_iso,
+            "original_team": original_team,
+            "dropped_by_id": dropped_by_id,
+
+            # waiverclaim.py uses "claim" object instead of these legacy fields,
+            # but we leave them out to avoid conflicts.
+            # "claim": {...} will be added by waiverclaim.py
+        }
+        self._save_waivers_json(data)
 
     async def _apply_discord_roles_after_approval(
         self,
@@ -189,7 +252,10 @@ class Drop(commands.Cog):
         team_name: str
     ) -> tuple[bool, str]:
         """
-        After sheet update: remove TEAM role, add Free Agent role.
+        After sheet update:
+        - remove TEAM role
+        - add Free Agent role
+        - add Waivers role
         Returns (ok, message).
         """
         try:
@@ -200,38 +266,56 @@ class Drop(commands.Cog):
                 return False, "Free Agent role ID is missing/invalid in TEAM_INFO."
             if not team_role_id:
                 return False, f"Team role ID is missing/invalid in TEAM_INFO for team `{team_name}`."
+            if not self.waivers_role_id:
+                return False, "WAIVERS_ROLE_ID is missing/invalid in .env."
 
             free_agent_role = guild.get_role(free_agent_role_id)
             team_role = guild.get_role(team_role_id)
+            waivers_role = guild.get_role(self.waivers_role_id)
 
             if not free_agent_role:
                 return False, f"Free Agent role (id={free_agent_role_id}) not found in server."
             if not team_role:
                 return False, f"Team role for `{team_name}` (id={team_role_id}) not found in server."
+            if not waivers_role:
+                return False, f"Waivers role (id={self.waivers_role_id}) not found in server."
 
             member = guild.get_member(player_id)
             if member is None:
                 member = await guild.fetch_member(player_id)
 
             logger.info(
-                "Role update (drop): member=%s remove_team_role=%s add_free_agent_role=%s",
+                "Role update (drop->waivers): member=%s remove_team_role=%s add_free_agent_role=%s add_waivers_role=%s",
                 member.id,
                 team_role.id,
-                free_agent_role.id
+                free_agent_role.id,
+                waivers_role.id
             )
 
             to_remove = [team_role] if team_role in member.roles else []
-            to_add = [free_agent_role] if free_agent_role not in member.roles else []
+            to_add = []
+            if free_agent_role not in member.roles:
+                to_add.append(free_agent_role)
+            if waivers_role not in member.roles:
+                to_add.append(waivers_role)
 
             if not to_remove and not to_add:
                 return True, f"No role changes needed for {member.mention}."
 
             if to_remove:
-                await member.remove_roles(*to_remove, reason=f"/drop approved: remove {team_name}, add Free Agent")
+                await member.remove_roles(
+                    *to_remove,
+                    reason=f"/drop approved: move {team_name} -> Waivers (add Free Agent + Waivers)"
+                )
             if to_add:
-                await member.add_roles(*to_add, reason=f"/drop approved: add Free Agent role")
+                await member.add_roles(
+                    *to_add,
+                    reason=f"/drop approved: add Free Agent + Waivers"
+                )
 
-            return True, f"Updated roles for {member.mention}: removed {team_role.mention}, added {free_agent_role.mention}."
+            added_mentions = ", ".join(r.mention for r in to_add) if to_add else "none"
+            removed_mentions = ", ".join(r.mention for r in to_remove) if to_remove else "none"
+            return True, f"Updated roles for {member.mention}: removed {removed_mentions}, added {added_mentions}."
 
         except discord.Forbidden:
             return False, "Bot lacks permission to manage roles (or role hierarchy prevents it)."
@@ -254,6 +338,7 @@ class Drop(commands.Cog):
             captain_team: str,
             player_id: int,
             player_display: str,
+            requested_at_iso: str,
         ):
             super().__init__(timeout=60 * 60)  # 1 hour timeout
             self.cog = cog
@@ -262,6 +347,7 @@ class Drop(commands.Cog):
             self.captain_team = captain_team
             self.player_id = player_id
             self.player_display = player_display
+            self.requested_at_iso = requested_at_iso
             self.decided = False
 
         async def _finalize_buttons(self, interaction: discord.Interaction, status_text: str):
@@ -302,7 +388,6 @@ class Drop(commands.Cog):
             self.decided = True
             approver = interaction.user
 
-            # ✅ ACK immediately
             try:
                 await interaction.response.defer(ephemeral=True, thinking=True)
             except discord.HTTPException:
@@ -312,7 +397,6 @@ class Drop(commands.Cog):
                 ws = self.cog._open_worksheet()
                 values = ws.get_all_values()
 
-                # Re-validate captain + team
                 captain_row = self.cog._find_row_index_by_discord_id(values, self.captain_id)
                 if not captain_row:
                     try:
@@ -339,7 +423,6 @@ class Drop(commands.Cog):
                     await self._finalize_buttons(interaction, "❌ Transaction failed (captain team blank).")
                     return
 
-                # Player row check
                 player_row = self.cog._find_row_index_by_discord_id(values, self.player_id)
                 if not player_row:
                     try:
@@ -355,7 +438,6 @@ class Drop(commands.Cog):
 
                 player_team_current = self.cog._get_team_from_row(values, player_row)
 
-                # Must match captain's current team (can't drop someone not on your team)
                 if _normalize(player_team_current) != _normalize(captain_team_current):
                     try:
                         await interaction.followup.send(
@@ -371,17 +453,34 @@ class Drop(commands.Cog):
                     await self._finalize_buttons(interaction, "❌ Approval failed (player not on captain team).")
                     return
 
-                # Apply: set to Free Agent
-                ws.update_cell(player_row, self.cog.COL_TEAM + 1, "Free Agent")
+                requested_at = _parse_iso_dt(self.requested_at_iso) or _utc_now()
+                expires_at = requested_at + timedelta(days=2)
 
-                # Update roles (remove team role, add Free Agent role)
+                # Sheet: set to Waivers
+                ws.update_cell(player_row, self.cog.COL_TEAM + 1, "Waivers")
+
+                # Roles: remove team role, add Free Agent + Waivers
                 role_ok, role_msg = await self.cog._apply_discord_roles_after_approval(
                     guild=interaction.guild,
                     player_id=self.player_id,
                     team_name=captain_team_current
                 )
 
-                # Post transaction log (sheet updated)
+                # Record waiver timing in JSON
+                try:
+                    self.cog._record_waiver(
+                        guild_id=interaction.guild.id,
+                        player_id=self.player_id,
+                        requested_at_iso=requested_at.isoformat(),
+                        expires_at_iso=expires_at.isoformat(),
+                        original_team=captain_team_current,
+                        dropped_by_id=self.captain_id,
+                    )
+                except Exception as e:
+                    logger.error("Failed to record waiver json: %r", e)
+                    traceback.print_exc()
+
+                # Transaction log (drop)
                 player_member = None
                 try:
                     player_member = interaction.guild.get_member(self.player_id) or await interaction.guild.fetch_member(self.player_id)
@@ -403,25 +502,29 @@ class Drop(commands.Cog):
                 except discord.HTTPException:
                     pass
 
+                expiry_text = f"<t:{int(expires_at.timestamp())}:F> (<t:{int(expires_at.timestamp())}:R>)"
+
                 if role_ok:
                     await self.cog._post_in_origin_channel(
                         self.origin_channel_id,
                         f"✅ Transaction approved by {approver.mention}. **{self.player_display}** has been dropped to **2 Day Waivers**.\n"
+                        f"🗓️ Waivers end: {expiry_text}\n"
                         f"🔧 {role_msg}"
                     )
                     await self._finalize_buttons(
                         interaction,
-                        f"✅ Approved by {approver.mention} — **{self.player_display}** → **2 Day Waivers**"
+                        f"✅ Approved by {approver.mention} — **{self.player_display}** → **2 Day Waivers** (ends {expiry_text})"
                     )
                 else:
                     await self.cog._post_in_origin_channel(
                         self.origin_channel_id,
                         f"✅ Transaction approved by {approver.mention}. **{self.player_display}** has been dropped to **2 Day Waivers**.\n"
+                        f"🗓️ Waivers end: {expiry_text}\n"
                         f"⚠️ Role update issue: {role_msg}"
                     )
                     await self._finalize_buttons(
                         interaction,
-                        f"✅ Approved by {approver.mention} — **{self.player_display}** → **2 Day Waivers** (⚠️ role update issue)"
+                        f"✅ Approved by {approver.mention} — **{self.player_display}** → **2 Day Waivers** (ends {expiry_text}, ⚠️ role issue)"
                     )
 
             except Exception as e:
@@ -447,7 +550,6 @@ class Drop(commands.Cog):
             self.decided = True
             approver = interaction.user
 
-            # ✅ ACK immediately
             try:
                 await interaction.response.defer(ephemeral=True, thinking=True)
             except discord.HTTPException:
@@ -483,6 +585,8 @@ class Drop(commands.Cog):
             step = "DEFER"
             await interaction.response.defer(ephemeral=True)
 
+            requested_at_iso = _utc_now().isoformat()
+
             # --- Env validation ---
             step = "ENV_VALIDATE"
             if not self.captains_role_id:
@@ -496,6 +600,9 @@ class Drop(commands.Cog):
                 return
             if not self.admins_role_id:
                 await interaction.followup.send("❌ ADMINS_ROLE_ID is missing/invalid in .env", ephemeral=True)
+                return
+            if not self.waivers_role_id:
+                await interaction.followup.send("❌ WAIVERS_ROLE_ID is missing/invalid in .env", ephemeral=True)
                 return
 
             # --- Captain-only restriction ---
@@ -552,7 +659,7 @@ class Drop(commands.Cog):
                 )
                 return
 
-            # Ensure TEAM_INFO has role IDs for both Free Agent + captain team
+            # Ensure TEAM_INFO has role IDs for Free Agent + captain team
             free_agent_role_id = _get_team_role_id("Free Agent")
             team_role_id = _get_team_role_id(captain_team)
             if not free_agent_role_id:
@@ -608,6 +715,7 @@ class Drop(commands.Cog):
                 captain_team=captain_team,
                 player_id=player1.id,
                 player_display=player1.display_name,
+                requested_at_iso=requested_at_iso,
             )
 
             admins_role_mention = f"<@&{self.admins_role_id}>"
@@ -618,7 +726,8 @@ class Drop(commands.Cog):
                     f"Captain: {interaction.user.mention}\n"
                     f"Team (from sheet): **{captain_team}**\n"
                     f"Drop: {player1.mention}\n"
-                    f"Origin channel: <#{origin_channel_id}>"
+                    f"Origin channel: <#{origin_channel_id}>\n"
+                    f"Requested at (UTC): `{requested_at_iso}`"
                 ),
                 allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
                 view=view
