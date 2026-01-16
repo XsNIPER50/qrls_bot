@@ -100,5 +100,11 @@ TEAM_INFO = {
         "logo": "",
         "emoji": "Free_agents",
         "id": 775160645791776800
+    },
+    "Waivers": {
+        "color": 0xFFFFFF,  # White
+        "logo": "",
+        "emoji": "",
+        "id": 1459792801507311677
     }
 }

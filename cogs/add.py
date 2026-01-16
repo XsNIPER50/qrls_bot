@@ -167,7 +167,7 @@ class Add(commands.Cog):
             return
 
         player_text = player_member.mention if isinstance(player_member, discord.Member) else player_display
-        await ch.send(f"**{team_name}** adds {player_text} to their roster from Free Agency.")
+        await ch.send(f"@{team_name} adds {player_text} to their roster from Free Agency.")
 
     async def _apply_discord_roles_after_approval(
         self,
