@@ -273,10 +273,10 @@ class UpdateUser(commands.Cog):
     @app_commands.guild_only()
     @app_commands.describe(
         player="Player to update (Discord user)",
-        nickname="New sheet nickname (Column B)",
-        salary="New salary/price in the league (Column C)",
-        team="New team (Column D) – choose from configured teams",
-        captain='Set captain flag (Column E) – "TRUE" or "FALSE"'
+        nickname="New sheet nickname",
+        salary="New salary/price in the league",
+        team="New team – choose from configured teams",
+        captain='Set captain flag – "TRUE" or "FALSE"'
     )
     @app_commands.choices(
         team=TEAM_CHOICES,
