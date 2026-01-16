@@ -48,7 +48,7 @@ SCHEDULE = {
     22: [("Hammerheads","Mustangs"),("Armada","Sappers"),("Rangers","Arctic Assassins"),
          ("Clarity United", "Astro")],                                                  #S11 PreSeason Torney Round 2 (Quarters)
 
-    23: [], #S11 PreSeason Torney Round 3 (Semis)
+    23: [("Hammerheads","Armada"),("Rangers","Clarity United")], #S11 PreSeason Torney Round 3 (Semis)
 
     24: [], #S11 PreSeason Torney Round 4 (Finals)
 }
