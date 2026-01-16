@@ -155,7 +155,7 @@ class Add(commands.Cog):
     async def _post_transaction_log(self, team_name: str, player_member: Optional[discord.Member], player_display: str):
         """
         Post to TRANSACTIONS_CHANNEL_ID after a fully successful transaction (sheet updated).
-        Message format: "[Team Name] adds [player1] to their roster from Free Agency."
+        Message format: "@Team adds @player to their roster from Free Agency."
         """
         if not self.transactions_channel_id:
             logger.warning("TRANSACTIONS_CHANNEL_ID missing/invalid; skipping transaction log post.")
@@ -166,8 +166,25 @@ class Add(commands.Cog):
             logger.warning("TRANSACTIONS_CHANNEL_ID does not resolve to a text channel; skipping.")
             return
 
+        # Player mention if possible
         player_text = player_member.mention if isinstance(player_member, discord.Member) else player_display
-        await ch.send(f"@{team_name} adds {player_text} to their roster from Free Agency.")
+
+        # Team role mention (prefer TEAM_INFO id, fallback to role name lookup, fallback to plain text)
+        team_role = None
+        team_role_id = _get_team_role_id(team_name)
+        if team_role_id and ch.guild:
+            team_role = ch.guild.get_role(team_role_id)
+
+        if not team_role and ch.guild:
+            team_role = discord.utils.get(ch.guild.roles, name=team_name)
+
+        team_text = team_role.mention if team_role else f"**{team_name}**"
+
+        await ch.send(
+            f"{team_text} adds {player_text} to their roster from Free Agency.",
+            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False)
+        )
+
 
     async def _apply_discord_roles_after_approval(
         self,
