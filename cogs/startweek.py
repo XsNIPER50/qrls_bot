@@ -100,11 +100,15 @@ class StartWeek(commands.Cog):
                 category = await guild.create_category(category_name)
             logger.info("Using category id=%s name=%s", category.id, category.name)
 
-            # ---- Captains role lookup (safe) ----
-            step = "CAPTAINS_ROLE_LOOKUP"
+            # ---- Captains & Streamer roles lookup (safe) ----
+            step = "ROLES_LOOKUP"
             logger.info("CAPTAINS_ROLE_ID=%s", CAPTAINS_ROLE_ID)
             captains_role = guild.get_role(CAPTAINS_ROLE_ID) if CAPTAINS_ROLE_ID else None
             logger.info("Captains role found=%s", bool(captains_role))
+
+            # Streamer role by name (no pings, just perms)
+            streamer_role = discord.utils.get(guild.roles, name="Streamer")
+            logger.info("Streamer role found=%s", bool(streamer_role))
 
             created_channels = []
 
@@ -132,6 +136,13 @@ class StartWeek(commands.Cog):
                 if role_b:
                     overwrites[role_b] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
+                # Streamer role read/send access in every scheduling channel
+                if streamer_role:
+                    overwrites[streamer_role] = discord.PermissionOverwrite(
+                        read_messages=True,
+                        send_messages=True
+                    )
+
                 step = "CREATE_CHANNEL"
                 logger.info("Creating channel: %s", channel_name)
                 new_channel = await guild.create_text_channel(
@@ -142,16 +153,28 @@ class StartWeek(commands.Cog):
                 )
                 created_channels.append(new_channel.name)
 
+                # ---- First message: ping captains + BOTH teams ----
                 step = "SEND_PING"
                 allowed_mentions = discord.AllowedMentions(roles=True, users=False, everyone=False)
+
+                team_a_mention = role_a.mention if role_a else f"@{team_a}"
+                team_b_mention = role_b.mention if role_b else f"@{team_b}"
+
                 if captains_role:
                     await new_channel.send(
-                        content=f"{captains_role.mention} — This is your scheduling channel for Week {week_number}.",
+                        content=(
+                            f"{captains_role.mention} — {team_a_mention} vs {team_b_mention} — "
+                            f"This is your scheduling channel for Week {week_number}."
+                        ),
                         allowed_mentions=allowed_mentions
                     )
                 else:
                     await new_channel.send(
-                        content=f"@Captains — This is your scheduling channel for Week {week_number}."
+                        content=(
+                            f"@Captains — {team_a_mention} vs {team_b_mention} — "
+                            f"This is your scheduling channel for Week {week_number}."
+                        ),
+                        allowed_mentions=allowed_mentions
                     )
 
                 step = "SEND_EMBED"
@@ -167,7 +190,12 @@ class StartWeek(commands.Cog):
                     color=discord.Color.blue()
                 )
                 embed.add_field(name="🏆 Matchup", value=f"**{team_a}** vs **{team_b}**", inline=False)
-                embed.set_footer(text="Please confirm your match time before the deadline. Please use /propose to propose a time and /confirm to confirm the proposed time.")
+                embed.set_footer(
+                    text=(
+                        "Please confirm your match time before the deadline. "
+                        "Please use /propose to propose a time and /confirm to confirm the proposed time."
+                    )
+                )
                 await new_channel.send(embed=embed)
 
             step = "FINAL_RESPONSE"
