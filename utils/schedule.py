@@ -50,5 +50,5 @@ SCHEDULE = {
 
     23: [("Hammerheads","Armada"),("Rangers","Clarity United")], #S11 PreSeason Torney Round 3 (Semis)
 
-    24: [], #S11 PreSeason Torney Round 4 (Finals)
+    24: [("Hammerheads","Rangers")], #S11 PreSeason Torney Round 4 (Finals)
 }
