@@ -449,7 +449,7 @@ class WaiverClaim(commands.Cog):
     # ---------------------------
     class ConfirmClaimView(discord.ui.View):
         def __init__(self, cog: "WaiverClaim", player_id: int, claimant_id: int):
-            super().__init__(timeout=60 * 30)  # 30 minutes to confirm
+            super().__init__(timeout=60 * 60 * 24)  # 24 hours to confirm
             self.cog = cog
             self.player_id = player_id
             self.claimant_id = claimant_id
