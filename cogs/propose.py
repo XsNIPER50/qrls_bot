@@ -137,7 +137,7 @@ class ProposeConfirmView(discord.ui.View):
     """Confirmation buttons for a proposed time/date."""
 
     def __init__(self, dt_iso: str, display_text: str, author: discord.Member):
-        super().__init__(timeout=60 * 60 * 24)
+        super().__init__(timeout=60 * 60 * 24) # 24hrs
         self.dt_iso = dt_iso
         self.display_text = display_text
         self.author = author

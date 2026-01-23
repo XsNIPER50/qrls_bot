@@ -13,7 +13,7 @@ CAPTAINS_ROLE_ID = int(os.getenv("CAPTAINS_ROLE_ID", 0))
 
 class ConfirmClearView(discord.ui.View):
     def __init__(self, week_number: Optional[int], category: discord.CategoryChannel, user: discord.Member):
-        super().__init__(timeout=60)
+        super().__init__(timeout=60) # 1hr
         self.week_number = week_number
         self.category = category
         self.user = user
