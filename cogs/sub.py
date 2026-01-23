@@ -435,9 +435,9 @@ class Sub(commands.Cog):
             if t and not t.done():
                 t.cancel()
 
-    # ---------------------------
+    # ----------------------------
     # Approval View
-    # ---------------------------
+    # ----------------------------
     class ApprovalView(discord.ui.View):
         def __init__(
             self,

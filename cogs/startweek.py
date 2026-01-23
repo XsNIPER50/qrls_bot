@@ -100,7 +100,7 @@ class StartWeek(commands.Cog):
                 category = await guild.create_category(category_name)
             logger.info("Using category id=%s name=%s", category.id, category.name)
 
-            # ---- Captains & Streamer roles lookup (safe) ----
+            # ----- Captains & Streamer roles lookup (safe) -----
             step = "ROLES_LOOKUP"
             logger.info("CAPTAINS_ROLE_ID=%s", CAPTAINS_ROLE_ID)
             captains_role = guild.get_role(CAPTAINS_ROLE_ID) if CAPTAINS_ROLE_ID else None
