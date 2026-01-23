@@ -261,7 +261,7 @@ class Add(commands.Cog):
             player_id: int,
             player_display: str,
         ):
-            super().__init__(timeout=60 * 60)  # 1 hour timeout
+            super().__init__(timeout=60 * 60 * 24)  # 24 hour timeout
             self.cog = cog
             self.origin_channel_id = origin_channel_id
             self.captain_id = captain_id

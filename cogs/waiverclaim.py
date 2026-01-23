@@ -573,7 +573,7 @@ class WaiverClaim(commands.Cog):
 
     class AdminApproveView(discord.ui.View):
         def __init__(self, cog: "WaiverClaim", player_id: int):
-            super().__init__(timeout=60 * 60)  # 1 hour
+            super().__init__(timeout=60 * 60 * 24)  # 24 hour
             self.cog = cog
             self.player_id = player_id
             self.decided = False

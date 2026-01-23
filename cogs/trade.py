@@ -292,7 +292,7 @@ class Trade(commands.Cog):
             team2: str,
             opposing_captain_id: int,
         ):
-            super().__init__(timeout=60 * 60)  # 1 hour
+            super().__init__(timeout=60 * 60 * 24)  # 24 hour
             self.cog = cog
             self.origin_channel_id = origin_channel_id
             self.requestor_id = requestor_id
@@ -426,7 +426,7 @@ class Trade(commands.Cog):
             expected_team1: str,
             expected_team2: str
         ):
-            super().__init__(timeout=60 * 60)  # 1 hour
+            super().__init__(timeout=60 * 60 * 24)  # 24 hour
             self.cog = cog
             self.origin_channel_id = origin_channel_id
             self.requestor_id = requestor_id

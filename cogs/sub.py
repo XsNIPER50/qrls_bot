@@ -451,7 +451,7 @@ class Sub(commands.Cog):
             player2_display: str,
             expires_at: datetime,
         ):
-            super().__init__(timeout=60 * 60)  # 1 hour
+            super().__init__(timeout=60 * 60 * 24)  # 24 hour
             self.cog = cog
             self.origin_channel_id = origin_channel_id
             self.captain_id = captain_id
