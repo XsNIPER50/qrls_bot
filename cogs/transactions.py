@@ -237,7 +237,7 @@ class Transactions(commands.Cog):
                 add_player
             )
 
-        # ----- Confirm -----
+        # ---- Confirm ----
         add_from_team = add_team_current or "Unknown"
         await interaction.response.send_message(
             (
