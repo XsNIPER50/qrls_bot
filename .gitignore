@@ -15,7 +15,7 @@ secrets/
 *.json
 
 # Team Info
-/data/salaries.csv
+data/salaries.csv
 
 # VS Code settings (optional)
 .vscode/
