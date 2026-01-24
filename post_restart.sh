@@ -1,33 +1,40 @@
 #!/usr/bin/env bash
-# post_restart.sh - Notify a Discord channel when QRLS bot restarts
+# post_restart.sh
+# Sends a Discord message to CHANGELOG_CHANNEL_ID when the QRLS bot restarts
 
 set -e
 
-cd /root/qrls_bot
+# Move to bot directory
+cd /root/qrls_bot || exit 0
 
-# Load .env into the environment (DISCORD_TOKEN, CHANGELOG_CHANNEL_ID, etc.)
+# Load environment variables from .env
 if [ -f .env ]; then
-  # This assumes .env is KEY=VALUE format, which matches how your bot uses it
   set -a
   . ./.env
   set +a
 fi
 
-# If we don't have what we need, just exit quietly so systemd doesn't fail
+# Required variables
+# DISCORD_TOKEN
+# CHANGELOG_CHANNEL_ID
 if [ -z "$DISCORD_TOKEN" ] || [ -z "$CHANGELOG_CHANNEL_ID" ]; then
+  # Missing config — silently exit so systemd does not fail
   exit 0
 fi
 
 HOSTNAME_STR=$(hostname)
-MESSAGE="⚙️ QRLS Bot was restarted on \`$HOSTNAME_STR\`."
+TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
-# Send a simple message to the configured channel using the Bot token
-curl -sS -X POST "https://discord.com/api/v10/channels/$CHANGELOG_CHANNEL_ID/messages" \
+MESSAGE="⚙️ **QRLS Bot Restarted**  
+🖥️ Host: \`$HOSTNAME_STR\`  
+🕒 Time: \`$TIMESTAMP\`"
+
+# Send message via Discord REST API
+curl -s -X POST "https://discord.com/api/v10/channels/$CHANGELOG_CHANNEL_ID/messages" \
   -H "Authorization: Bot $DISCORD_TOKEN" \
   -H "Content-Type: application/json" \
-  -d "$(printf '{"content": "%s"}' "$MESSAGE")" \
+  -d "$(jq -nc --arg content "$MESSAGE" '{content:$content}')" \
   >/dev/null 2>&1 || true
 
-# Always exit 0 so this hook never marks the service as failed
+# Always exit successfully so systemd is happy
 exit 0
-EOF
