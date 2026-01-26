@@ -88,7 +88,7 @@ def _get_team_role_id(team_name: str) -> Optional[int]:
 class Retire(commands.Cog):
     """
     /retire – Admin-only command to retire a player:
-      • Remove all team/waiver/free-agent/captain roles in Discord
+      • Remove all team/waiver/free-agent/captain roles in Discord (if still in server)
       • Set Column D (Team) to "Retired" in the sheet
       • Set Column E (Captain) to "FALSE" in the sheet
       • Log a message in TRANSACTIONS_CHANNEL_ID (with optional reasoning)
@@ -191,11 +191,13 @@ class Retire(commands.Cog):
     async def _post_transactions_log(
         self,
         guild: discord.Guild,
-        player: discord.Member,
+        player_id: int,
+        player_member: Optional[discord.Member],
         reason: Optional[str] = None
     ):
         """
         Posts '@player is retiring from the QRLS.' (and optional reason) to TRANSACTIONS_CHANNEL_ID.
+        Uses member mention if present, otherwise <@ID>.
         """
         try:
             if not self.transactions_channel_id:
@@ -210,9 +212,13 @@ class Retire(commands.Cog):
                 )
                 return
 
-            base_message = f"{player.mention} is retiring from the QRLS."
+            if player_member is not None:
+                mention = player_member.mention
+            else:
+                mention = f"<@{player_id}>"
+
+            base_message = f"{mention} is retiring from the QRLS."
             if reason:
-                # New line with the reasoning, like pressing Enter in a document
                 base_message += f"\nReason: {reason}"
 
             logger.info("Posting retire log message: %s", base_message)
@@ -222,7 +228,7 @@ class Retire(commands.Cog):
                 allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False)
             )
         except Exception as e:
-            logger.error("Failed posting retire log for player_id=%s", getattr(player, "id", None))
+            logger.error("Failed posting retire log for player_id=%s", player_id)
             traceback.print_exc()
 
     # ---------------------------
@@ -234,23 +240,63 @@ class Retire(commands.Cog):
     )
     @app_commands.guild_only()
     @app_commands.describe(
-        player1="Player to retire from the QRLS",
+        player="Player to retire (dropdown of current server members, optional)",
+        player_id="Discord ID of the player to retire (for users not in server, optional)",
         reason="Reasoning for the retirement (optional)"
     )
     async def retire(
         self,
         interaction: Interaction,
-        player1: discord.Member,
+        player: Optional[discord.Member] = None,
+        player_id: Optional[str] = None,
         reason: Optional[str] = None
     ):
         step = "START"
+
         logger.info(
-            "/retire invoked by user_id=%s target_id=%s reason=%r",
+            "/retire invoked by user_id=%s player_obj=%s player_id_raw=%r reason=%r",
             getattr(interaction.user, "id", None),
-            getattr(player1, "id", None),
+            getattr(player, "id", None) if isinstance(player, discord.Member) else None,
+            player_id,
             reason
         )
+
+        # ---- Pre-validate arguments BEFORE defer ----
+        # Must provide exactly one of (player, player_id)
+        if player is None and player_id is None:
+            await interaction.response.send_message(
+                "❌ You must provide either `player` (dropdown) **or** `player_id`.",
+                ephemeral=True
+            )
+            return
+
+        if player is not None and player_id is not None:
+            await interaction.response.send_message(
+                "❌ Please provide **either** `player` or `player_id`, not both.",
+                ephemeral=True
+            )
+            return
+
+        # Resolve ID + initial member reference
         try:
+            step = "PARSE_ID"
+            player_member: Optional[discord.Member]
+            if player is not None:
+                # Using dropdown member
+                player_id_int = player.id
+                player_member = player
+            else:
+                # Using raw ID string
+                try:
+                    player_id_int = int(player_id)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    await interaction.response.send_message(
+                        "❌ `player_id` must be a numeric Discord ID.",
+                        ephemeral=True
+                    )
+                    return
+                player_member = None
+
             step = "DEFER"
             await interaction.response.defer(ephemeral=True)
 
@@ -286,10 +332,10 @@ class Retire(commands.Cog):
                 return
 
             step = "FIND_ROW"
-            row_index = self._find_row_index_by_discord_id(values, player1.id)
+            row_index = self._find_row_index_by_discord_id(values, player_id_int)
             if not row_index:
                 await interaction.followup.send(
-                    f"❌ `{player1.display_name}` is not found in the Google Sheet (Column A, Discord ID).",
+                    f"❌ Player with Discord ID `{player_id_int}` is not found in the Google Sheet (Column A, Discord ID).",
                     ephemeral=True
                 )
                 return
@@ -299,20 +345,39 @@ class Retire(commands.Cog):
             ws.update_cell(row_index, self.COL_TEAM + 1, "Retired")
             ws.update_cell(row_index, self.COL_CAPTAIN + 1, "FALSE")
 
-            # ---- Remove roles in Discord ----
+            # ---- Try to resolve member in guild (if we don't already have it from dropdown) ----
+            step = "RESOLVE_MEMBER"
+            if player_member is None:
+                tmp_member = guild.get_member(player_id_int)
+                if tmp_member is None:
+                    try:
+                        tmp_member = await guild.fetch_member(player_id_int)
+                    except (discord.NotFound, discord.Forbidden):
+                        tmp_member = None
+                player_member = tmp_member
+
+            # ---- Remove roles in Discord if still in server ----
             step = "REMOVE_ROLES"
-            role_msg = await self._remove_team_and_special_roles(player1)
+            if player_member is not None:
+                role_msg = await self._remove_team_and_special_roles(player_member)
+            else:
+                role_msg = "Player is not in the server; no roles to remove."
 
             # ---- Post to transactions channel ----
             step = "POST_LOG"
-            await self._post_transactions_log(guild, player1, reason)
+            await self._post_transactions_log(guild, player_id_int, player_member, reason)
 
             # ---- Reply to command invoker ----
             step = "RESPOND"
+            if player_member is not None:
+                target_display = player_member.mention
+            else:
+                target_display = f"<@{player_id_int}>"
+
             extra_reason_line = f"\n📝 Reason: {reason}" if reason else ""
             await interaction.followup.send(
                 content=(
-                    f"✅ {player1.mention} has been marked as **Retired** in the sheet and captain flag set to `FALSE`."
+                    f"✅ {target_display} has been marked as **Retired** in the sheet and captain flag set to `FALSE`."
                     f"{extra_reason_line}\n"
                     f"🔧 {role_msg}"
                 ),
@@ -323,10 +388,16 @@ class Retire(commands.Cog):
         except Exception as e:
             log_exception(step, e)
             try:
-                await interaction.followup.send(
-                    f"❌ /retire failed at step: **{step}** (check bot console for traceback).",
-                    ephemeral=True
-                )
+                if interaction.response.is_done():
+                    await interaction.followup.send(
+                        f"❌ /retire failed at step: **{step}** (check bot console for traceback).",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message(
+                        f"❌ /retire failed at step: **{step}** (check bot console for traceback).",
+                        ephemeral=True
+                    )
             except discord.HTTPException:
                 pass
 
