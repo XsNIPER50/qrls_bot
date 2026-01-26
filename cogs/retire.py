@@ -196,7 +196,7 @@ class Retire(commands.Cog):
         reason: Optional[str] = None
     ):
         """
-        Posts '@player is retiring from the QRLS.' (and optional reason) to TRANSACTIONS_CHANNEL_ID.
+        Posts '@player retires from the QRLS.' (and optional reason) to TRANSACTIONS_CHANNEL_ID.
         Uses member mention if present, otherwise <@ID>.
         """
         try:
@@ -217,7 +217,7 @@ class Retire(commands.Cog):
             else:
                 mention = f"<@{player_id}>"
 
-            base_message = f"{mention} is retiring from the QRLS."
+            base_message = f"{mention} retires from the QRLS."
             if reason:
                 base_message += f"\nReason: {reason}"
 
