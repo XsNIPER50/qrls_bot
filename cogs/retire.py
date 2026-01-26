@@ -83,7 +83,7 @@ class Retire(commands.Cog):
       • Remove all team/waiver/free-agent/captain roles in Discord
       • Set Column D (Team) to "Retired" in the sheet
       • Set Column E (Captain) to "FALSE" in the sheet
-      • Log a message in TRANSACTIONS_CHANNEL_ID
+      • Log a message in TRANSACTIONS_CHANNEL_ID (with optional reasoning)
     """
 
     def __init__(self, bot: commands.Bot):
@@ -180,9 +180,14 @@ class Retire(commands.Cog):
             traceback.print_exc()
             return "⚠️ Unexpected error while removing roles (see console)."
 
-    async def _post_transactions_log(self, guild: discord.Guild, player: discord.Member):
+    async def _post_transactions_log(
+        self,
+        guild: discord.Guild,
+        player: discord.Member,
+        reason: Optional[str] = None
+    ):
         """
-        Posts '@player is retiring from the QRLS' to TRANSACTIONS_CHANNEL_ID.
+        Posts '@player is retiring from the QRLS.' (and optional reason) to TRANSACTIONS_CHANNEL_ID.
         """
         if not self.transactions_channel_id:
             logger.warning("TRANSACTIONS_CHANNEL_ID missing/invalid; skipping retire log post.")
@@ -193,8 +198,13 @@ class Retire(commands.Cog):
             logger.warning("TRANSACTIONS_CHANNEL_ID does not resolve to a text channel; skipping.")
             return
 
+        base_message = f"{player.mention} is retiring from the QRLS."
+        if reason:
+            # New line with the reasoning, like pressing Enter in a document
+            base_message += f"\nReason: {reason}"
+
         await ch.send(
-            content=f"{player.mention} is retiring from the QRLS.",
+            content=base_message,
             allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False)
         )
 
@@ -207,9 +217,15 @@ class Retire(commands.Cog):
     )
     @app_commands.guild_only()
     @app_commands.describe(
-        player1="Player to retire from the QRLS"
+        player1="Player to retire from the QRLS",
+        reason="Reasoning for the retirement (optional)"
     )
-    async def retire(self, interaction: Interaction, player1: discord.Member):
+    async def retire(
+        self,
+        interaction: Interaction,
+        player1: discord.Member,
+        reason: Optional[str] = None
+    ):
         step = "START"
         try:
             step = "DEFER"
@@ -266,13 +282,15 @@ class Retire(commands.Cog):
 
             # ---- Post to transactions channel ----
             step = "POST_LOG"
-            await self._post_transactions_log(guild, player1)
+            await self._post_transactions_log(guild, player1, reason)
 
             # ---- Reply to command invoker ----
             step = "RESPOND"
+            extra_reason_line = f"\n📝 Reason: {reason}" if reason else ""
             await interaction.followup.send(
                 content=(
-                    f"✅ {player1.mention} has been marked as **Retired** in the sheet and captain flag set to `FALSE`.\n"
+                    f"✅ {player1.mention} has been marked as **Retired** in the sheet and captain flag set to `FALSE`."
+                    f"{extra_reason_line}\n"
                     f"🔧 {role_msg}"
                 ),
                 ephemeral=True,
