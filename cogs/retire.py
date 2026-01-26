@@ -25,6 +25,14 @@ if not logger.handlers:
 logger.setLevel(logging.INFO)
 
 
+def log_exception(step: str, error: Exception):
+    """
+    Centralized exception logger for /retire.
+    """
+    logger.error("❌ /retire crashed at step=%s | %s: %r", step, type(error).__name__, error)
+    traceback.print_exc()
+
+
 def _get_env_int(name: str) -> Optional[int]:
     v = os.getenv(name)
     if not v:
@@ -189,24 +197,33 @@ class Retire(commands.Cog):
         """
         Posts '@player is retiring from the QRLS.' (and optional reason) to TRANSACTIONS_CHANNEL_ID.
         """
-        if not self.transactions_channel_id:
-            logger.warning("TRANSACTIONS_CHANNEL_ID missing/invalid; skipping retire log post.")
-            return
+        try:
+            if not self.transactions_channel_id:
+                logger.warning("TRANSACTIONS_CHANNEL_ID missing/invalid; skipping retire log post.")
+                return
 
-        ch = self.bot.get_channel(self.transactions_channel_id)
-        if not isinstance(ch, discord.TextChannel):
-            logger.warning("TRANSACTIONS_CHANNEL_ID does not resolve to a text channel; skipping.")
-            return
+            ch = self.bot.get_channel(self.transactions_channel_id)
+            if not isinstance(ch, discord.TextChannel):
+                logger.warning(
+                    "TRANSACTIONS_CHANNEL_ID=%s does not resolve to a text channel; skipping.",
+                    self.transactions_channel_id
+                )
+                return
 
-        base_message = f"{player.mention} is retiring from the QRLS."
-        if reason:
-            # New line with the reasoning, like pressing Enter in a document
-            base_message += f"\nReason: {reason}"
+            base_message = f"{player.mention} is retiring from the QRLS."
+            if reason:
+                # New line with the reasoning, like pressing Enter in a document
+                base_message += f"\nReason: {reason}"
 
-        await ch.send(
-            content=base_message,
-            allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False)
-        )
+            logger.info("Posting retire log message: %s", base_message)
+
+            await ch.send(
+                content=base_message,
+                allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False)
+            )
+        except Exception as e:
+            logger.error("Failed posting retire log for player_id=%s", getattr(player, "id", None))
+            traceback.print_exc()
 
     # ---------------------------
     # /retire command
@@ -227,6 +244,12 @@ class Retire(commands.Cog):
         reason: Optional[str] = None
     ):
         step = "START"
+        logger.info(
+            "/retire invoked by user_id=%s target_id=%s reason=%r",
+            getattr(interaction.user, "id", None),
+            getattr(player1, "id", None),
+            reason
+        )
         try:
             step = "DEFER"
             await interaction.response.defer(ephemeral=True)
@@ -298,8 +321,7 @@ class Retire(commands.Cog):
             )
 
         except Exception as e:
-            logger.error("ERROR at step=%s in /retire: %r", step, e)
-            traceback.print_exc()
+            log_exception(step, e)
             try:
                 await interaction.followup.send(
                     f"❌ /retire failed at step: **{step}** (check bot console for traceback).",
