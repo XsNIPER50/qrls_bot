@@ -14,7 +14,7 @@ TEAM_INFO = {
     "Astro": {
         "color": 0x12086F,  # Blue
         "logo": "https://cdn.discordapp.com/attachments/1446133714999316631/1446146907469779028/Astro_Gaming_Logo_New.png?ex=697cc0c2&is=697b6f42&hm=4207fbf3f70ca58b0105f751c845de5303b72c1629d67d7c4244236595f80425&",        
-        "emoji": "Astro_Gaming",
+        "emoji": "Astro",
         "id": 963375539773661184
     },
     "Bleacher Boys": {
