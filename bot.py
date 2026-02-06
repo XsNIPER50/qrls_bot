@@ -144,7 +144,8 @@ async def main():
             "cogs.unretire",        
             "cogs.retire",          
             "cogs.settoken",        
-            "cogs.token"            
+            "cogs.token",           
+            "cogs.sendmessage"
 
         ]:
             try:
