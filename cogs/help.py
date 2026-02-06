@@ -27,6 +27,8 @@ COMMAND_ACCESS: dict[str, str] = {
     "unretire": ACCESS_ADMIN,
     "updateuser": ACCESS_ADMIN,
     "retire": ACCESS_ADMIN,
+    "settoken": ACCESS_ADMIN,
+    "token":ACCESS_ADMIN,
 
     # Captain-only commands (admins can also see/use these):
     "add": ACCESS_CAPTAIN,
