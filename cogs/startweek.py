@@ -13,6 +13,7 @@ load_dotenv()
 
 ADMINS_ROLE_ID = int(os.getenv("ADMINS_ROLE_ID", 0))
 CAPTAINS_ROLE_ID = int(os.getenv("CAPTAINS_ROLE_ID", 0))
+KENTO_USER_ID = int(os.getenv("KENTO_USER_ID", 0))  # ✅ NEW
 
 logger = logging.getLogger("qrls.startweek")
 if not logger.handlers:
@@ -110,6 +111,18 @@ class StartWeek(commands.Cog):
             streamer_role = discord.utils.get(guild.roles, name="Streamer")
             logger.info("Streamer role found=%s", bool(streamer_role))
 
+            # ✅ NEW: Kento member lookup (optional; safe if not found)
+            step = "KENTO_LOOKUP"
+            kento_member = None
+            if KENTO_USER_ID:
+                kento_member = guild.get_member(KENTO_USER_ID)
+                if not kento_member:
+                    try:
+                        kento_member = await guild.fetch_member(KENTO_USER_ID)
+                    except (discord.NotFound, discord.Forbidden):
+                        kento_member = None
+                logger.info("Kento member found=%s KENTO_USER_ID=%s", bool(kento_member), KENTO_USER_ID)
+
             created_channels = []
 
             for idx, (team_a, team_b) in enumerate(matches, start=1):
@@ -139,6 +152,13 @@ class StartWeek(commands.Cog):
                 # Streamer role read/send access in every scheduling channel
                 if streamer_role:
                     overwrites[streamer_role] = discord.PermissionOverwrite(
+                        read_messages=True,
+                        send_messages=True
+                    )
+
+                # ✅ NEW: Kento gets read/send access in every scheduling channel
+                if kento_member:
+                    overwrites[kento_member] = discord.PermissionOverwrite(
                         read_messages=True,
                         send_messages=True
                     )
