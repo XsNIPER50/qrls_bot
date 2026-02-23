@@ -44,7 +44,7 @@ TEAM_INFO = {
     "Hammerheads": {
         "color": 0xFFED29,  # Yellow
         "logo": "https://cdn.discordapp.com/attachments/1446133714999316631/1446146990873510028/HammerHeads_Logo_New.png?ex=697cc0d6&is=697b6f56&hm=74add3be95a68ea76b1a8628daaae6c5048f2781b0433b37928876eb3f5270af&",
-        "emoji": "HammerHeads",
+        "emoji": "Hammerheads",
         "id": 775159655051427881
     },
     "Kings": {
