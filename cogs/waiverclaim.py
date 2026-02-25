@@ -112,7 +112,7 @@ class WaiverClaim(commands.Cog):
         self.sheet_id = os.getenv("GOOGLE_SHEET_ID", "")
         self.roster_worksheet_name = os.getenv("GOOGLE_WORKSHEET", "")
 
-        # Waiver order worksheet (NEW)
+        # Waiver order worksheet
         self.waiver_order_worksheet_name = os.getenv("WAIVER_ORDER_WORKSHEET", "WaiverOrder")
 
         # Roster sheet columns: A=Discord ID, D=Team
@@ -270,7 +270,29 @@ class WaiverClaim(commands.Cog):
 
         team_role_id = _get_team_role_id(team_name)
         team_text = f"<@&{team_role_id}>" if team_role_id else f"**{team_name}**"
-        await ch.send(f"{team_text} has won the waiver claim for {player.mention}.")
+        await ch.send(
+            f"{team_text} has won the waiver claim for {player.mention}.",
+            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False)
+        )
+
+    async def _post_transaction_log_waiver_claim(self, player: discord.Member):
+        """
+        ALWAYS post when a waiver claim is placed or updated:
+        "A waiver claim has been placed on [player being claimed]".
+        """
+        if not self.transactions_channel_id:
+            logger.warning("TRANSACTIONS_CHANNEL_ID missing/invalid; skipping waiver-claim log.")
+            return
+
+        ch = self.bot.get_channel(self.transactions_channel_id)
+        if not isinstance(ch, discord.TextChannel):
+            logger.warning("TRANSACTIONS_CHANNEL_ID does not resolve to a text channel; skipping waiver-claim log.")
+            return
+
+        await ch.send(
+            f"A waiver claim has been placed on {player.mention}.",
+            allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False)
+        )
 
     async def _post_to_channel(self, channel_id: int, message: str, allowed_mentions: Optional[discord.AllowedMentions] = None):
         ch = self.bot.get_channel(channel_id)
@@ -317,7 +339,7 @@ class WaiverClaim(commands.Cog):
 
     # ---------------------------
     # Expiry finalize + role updates
-    # ---------------------------
+    # ---------------------------`
     async def _finalize_to_free_agent(self, guild: discord.Guild, player_id: int) -> Tuple[bool, str]:
         """
         If waiver expires with no claim (or claim declined), finalize:
@@ -569,7 +591,7 @@ class WaiverClaim(commands.Cog):
         async def on_timeout(self):
             for item in self.children:
                 if isinstance(item, discord.ui.Button):
-                    item.disabled = True
+                    item.disabled = True)
 
     class AdminApproveView(discord.ui.View):
         def __init__(self, cog: "WaiverClaim", player_id: int):
@@ -662,12 +684,7 @@ class WaiverClaim(commands.Cog):
             except discord.HTTPException:
                 pass
 
-            # Notify claimant in origin channel
-            try:
-                claimant_member = interaction.guild.get_member(claimant_id) or await interaction.guild.fetch_member(claimant_id)
-            except Exception:
-                claimant_member = None
-
+            # Notify origin channel
             try:
                 player_member = interaction.guild.get_member(self.player_id) or await interaction.guild.fetch_member(self.player_id)
             except Exception:
@@ -689,12 +706,11 @@ class WaiverClaim(commands.Cog):
                 if origin_channel_id:
                     await self.cog._post_to_channel(
                         origin_channel_id,
-                        f"✅ **Waiver Claim Approved** — {('**' + winning_team + '**')} wins the claim for {player_member.mention if player_member else f'`{self.player_id}`'}."
+                        f"✅ **Waiver Claim Approved** — **{winning_team}** wins the claim for {player_member.mention if player_member else f'`{self.player_id}`'}."
                     )
 
                 await self._finalize_buttons(interaction, f"✅ Approved — **{winning_team}** wins the claim.")
             else:
-                # Keep claim record (still pending), but tell origin channel it failed (usually roster spot)
                 if origin_channel_id:
                     await self.cog._post_to_channel(
                         origin_channel_id,
@@ -717,14 +733,12 @@ class WaiverClaim(commands.Cog):
 
             origin_channel_id = claim.get("origin_channel_id") if claim else None
             winning_team = _normalize(str(claim.get("team_name") or "")) if claim else ""
-            claimant_id = claim.get("claimed_by_id") if claim else None
 
-            # On admin reject, we just clear the claim and finalize to Free Agent (since waiver is already expired)
+            # On admin reject, we just clear the claim and finalize to Free Agent
             try:
                 if interaction.guild:
                     ok, msg = await self.cog._finalize_to_free_agent(interaction.guild, self.player_id)
                     if ok:
-                        # clear record entirely
                         data2 = self.cog._load_waivers_json()
                         data2.pop(str(self.player_id), None)
                         self.cog._save_waivers_json(data2)
@@ -799,7 +813,6 @@ class WaiverClaim(commands.Cog):
             view=view
         )
 
-        # Tell origin channel it's waiting for admin approval
         await self._post_to_channel(
             origin_channel_id,
             f"ℹ️ {claimant_member.mention} — your waiver claim for {player_member.mention} is **waiting for admin approval**.\n"
@@ -858,7 +871,6 @@ class WaiverClaim(commands.Cog):
                         changed = True
                     continue
 
-                # Claim exists -> handle confirmation
                 claimant_id = claim.get("claimed_by_id")
                 origin_channel_id = claim.get("origin_channel_id")
                 team_name = _normalize(str(claim.get("team_name") or ""))
@@ -868,7 +880,6 @@ class WaiverClaim(commands.Cog):
 
                 confirmed = claim.get("confirmed", None)
 
-                # If explicitly declined -> finalize to FA and remove record
                 if confirmed is False:
                     ok, msg = await self._finalize_to_free_agent(guild, player_id)
                     if ok:
@@ -876,7 +887,6 @@ class WaiverClaim(commands.Cog):
                         changed = True
                     continue
 
-                # If confirmed True -> send to admins (idempotent: sending twice is annoying but safe)
                 if confirmed is True:
                     try:
                         await self._send_admin_approval_request(guild=guild, player_id=player_id)
@@ -905,7 +915,6 @@ class WaiverClaim(commands.Cog):
                         view=view
                     )
 
-                    # Mark that we prompted (so we don't spam every 5 minutes)
                     claim["confirmed"] = "PROMPTED"
                     claim["confirmed_at"] = _utc_now().isoformat()
                     rec["claim"] = claim
@@ -916,9 +925,6 @@ class WaiverClaim(commands.Cog):
                     logger.error("Failed sending expiry confirmation prompt: %r", e)
                     traceback.print_exc()
 
-            # Convert PROMPTED -> None behavior:
-            # We store PROMPTED just to avoid spamming; if claimant never answers,
-            # you can decide later to auto-decline. For now we simply leave it as PROMPTED.
             if changed:
                 self._save_waivers_json(data)
 
@@ -1073,7 +1079,6 @@ class WaiverClaim(commands.Cog):
                 existing_team = _normalize(str(existing_claim.get("team_name") or ""))
                 existing_rank = existing_claim.get("team_rank")
                 if not isinstance(existing_rank, int):
-                    # If rank missing, treat as lowest priority and allow overwrite
                     existing_rank = 9999
 
                 # 1 is highest priority. Smaller number = better claim.
@@ -1081,7 +1086,6 @@ class WaiverClaim(commands.Cog):
                     await interaction.followup.send("🚫 A claim already exists that is higher than yours.", ephemeral=True)
                     return
 
-                # If claimant is higher priority (smaller rank) -> replace
                 if claimant_rank < existing_rank:
                     self._set_claim(
                         data=data,
@@ -1092,6 +1096,10 @@ class WaiverClaim(commands.Cog):
                         claimed_by_id=interaction.user.id,
                         origin_channel_id=origin_channel_id,
                     )
+
+                    # 🔔 Always log in TRANSACTIONS_CHANNEL_ID
+                    await self._post_transaction_log_waiver_claim(player1)
+
                     await interaction.followup.send(
                         f"✅ Your claim replaced the existing claim.\n"
                         f"Player: {player1.mention}\n"
@@ -1104,7 +1112,6 @@ class WaiverClaim(commands.Cog):
                     )
                     return
 
-                # Equal rank (shouldn't happen normally): do not replace
                 await interaction.followup.send("🚫 A claim already exists with equal priority.", ephemeral=True)
                 return
 
@@ -1119,6 +1126,9 @@ class WaiverClaim(commands.Cog):
                 claimed_by_id=interaction.user.id,
                 origin_channel_id=origin_channel_id,
             )
+
+            # 🔔 Always log in TRANSACTIONS_CHANNEL_ID
+            await self._post_transaction_log_waiver_claim(player1)
 
             await interaction.followup.send(
                 f"✅ Claim placed.\nPlayer: {player1.mention}\nClaiming Team: **{claimant_team}** (rank {claimant_rank})\n"
