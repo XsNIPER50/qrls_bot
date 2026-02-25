@@ -3,7 +3,7 @@ import json
 import logging
 import traceback
 from typing import Optional, Dict, Any, Tuple
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import discord
 from discord import app_commands, Interaction
@@ -339,7 +339,7 @@ class WaiverClaim(commands.Cog):
 
     # ---------------------------
     # Expiry finalize + role updates
-    # ---------------------------`
+    # ---------------------------
     async def _finalize_to_free_agent(self, guild: discord.Guild, player_id: int) -> Tuple[bool, str]:
         """
         If waiver expires with no claim (or claim declined), finalize:
@@ -591,7 +591,7 @@ class WaiverClaim(commands.Cog):
         async def on_timeout(self):
             for item in self.children:
                 if isinstance(item, discord.ui.Button):
-                    item.disabled = True)
+                    item.disabled = True
 
     class AdminApproveView(discord.ui.View):
         def __init__(self, cog: "WaiverClaim", player_id: int):
@@ -813,6 +813,7 @@ class WaiverClaim(commands.Cog):
             view=view
         )
 
+        # Tell origin channel it's waiting for admin approval
         await self._post_to_channel(
             origin_channel_id,
             f"ℹ️ {claimant_member.mention} — your waiver claim for {player_member.mention} is **waiting for admin approval**.\n"
