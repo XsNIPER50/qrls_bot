@@ -53,4 +53,6 @@ SCHEDULE = {
     24: [("Hammerheads","Rangers")], #S11 PreSeason Torney Round 4 (Finals)
 
     31: [("Arctic Assassins", "Speed Demons"),("Kings","Clarity United"),("Mustangs","Elite Ink"),("Rangers","Spectres")], #S11 Quarter Finals
+
+    32: [("Arctic Assassins","Clarity United"),("Spectres","Elite Ink")], #S11 Semi Finals
 }
