@@ -11,6 +11,7 @@ import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
 from dotenv import load_dotenv
+from utils.runtime_data import atomic_json_dump
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -292,8 +293,7 @@ class Sub(commands.Cog):
     async def _save_subs(self, subs: List[Dict[str, Any]]):
         async with self._subs_lock:
             os.makedirs(os.path.dirname(self.subs_path), exist_ok=True)
-            with open(self.subs_path, "w", encoding="utf-8") as f:
-                json.dump(subs, f, indent=2)
+            atomic_json_dump(self.subs_path, subs, indent=2)
 
     async def _add_sub_record(self, record: Dict[str, Any]):
         subs = await self._load_subs()

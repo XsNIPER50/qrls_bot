@@ -9,6 +9,7 @@ import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
 from dotenv import load_dotenv
+from utils.runtime_data import atomic_json_dump
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -339,8 +340,7 @@ class Unretire(commands.Cog):
 
             data[gkey] = entries
 
-            with open(WAIVERS_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            atomic_json_dump(WAIVERS_FILE, data, indent=2)
 
             logger.info(
                 "Recorded waiver for player %s in guild %s (expires %s).",

@@ -10,6 +10,7 @@ from discord import app_commands, Interaction
 from discord.ext import commands
 from utils.team_info import TEAM_INFO
 from dotenv import load_dotenv
+from utils.runtime_data import atomic_json_dump
 
 # ✅ Load environment variables
 load_dotenv()
@@ -41,9 +42,7 @@ def load_proposals() -> dict:
 
 
 def save_proposals(data: dict):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(PROPOSALS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    atomic_json_dump(PROPOSALS_FILE, data, indent=2)
 
 
 def user_is_admin_or_captain(member: discord.Member) -> bool:

@@ -9,6 +9,7 @@ from discord import app_commands, Interaction
 from discord.ext import commands
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
+from utils.runtime_data import atomic_json_dump
 
 # Optional: reuse cooldowns if desired
 try:
@@ -39,8 +40,7 @@ TIME_RE = re.compile(r"^\s*(1[0-2]|0?[1-9])(?:\:([0-5]\d))?\s*([ap]m)\s*$", re.I
 def ensure_data_file():
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.exists(PROPOSALS_FILE):
-        with open(PROPOSALS_FILE, "w", encoding="utf-8") as f:
-            json.dump({}, f)
+        atomic_json_dump(PROPOSALS_FILE, {})
 
 
 def load_proposals() -> dict:
@@ -54,8 +54,7 @@ def load_proposals() -> dict:
 
 def save_proposals(data: dict):
     ensure_data_file()
-    with open(PROPOSALS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    atomic_json_dump(PROPOSALS_FILE, data, indent=2)
 
 
 def user_is_admin_or_captain(member: discord.Member) -> bool:

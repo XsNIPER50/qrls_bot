@@ -1,30 +1,44 @@
-import sys
-import os
-sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-
-import discord
-from discord.ext import commands
-from discord import app_commands
-from dotenv import load_dotenv
 import asyncio
+import logging
+import os
+import sys
 from time import monotonic
 
+import discord
+from discord import app_commands
+from discord.ext import commands
+from dotenv import load_dotenv
+
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+sys.path.append(BASE_DIR)
+
 # --- Load environment variables ---
-load_dotenv()
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = int(os.getenv("GUILD_ID"))
-ADMINS_ROLE_ID = int(os.getenv("ADMINS_ROLE_ID", 0))
-CAPTAINS_ROLE_ID = int(os.getenv("CAPTAINS_ROLE_ID", 0))
+
+
+def env_int(name: str, default: int = 0) -> int:
+    """Read an integer environment variable with a useful startup error."""
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+
+
+GUILD_ID = env_int("GUILD_ID")
+ADMINS_ROLE_ID = env_int("ADMINS_ROLE_ID")
+CAPTAINS_ROLE_ID = env_int("CAPTAINS_ROLE_ID")
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("qrls.bot")
 
 # --- Discord bot setup ---
-intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-# ================================================================
-# 🕒 GLOBAL COOLDOWN (Admins bypass, applies to all slash commands)
-# ================================================================
 THROTTLE_SECONDS = 8.0
 _last_use_by_user: dict[int, float] = {}
 
@@ -39,55 +53,49 @@ def is_admin_user(interaction: discord.Interaction) -> bool:
     return False
 
 
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    """
-    Intercepts all interactions. If it's a slash command,
-    apply the cooldown for non-admin users before processing.
-    """
-    # Make sure it’s a slash command (and not autocomplete, button, etc.)
-    if not interaction.command:
-        return await bot.process_application_commands(interaction)
+class QRLSCommandTree(app_commands.CommandTree):
+    """Command tree with the existing global per-user throttle."""
 
-    # Skip admins entirely
-    if is_admin_user(interaction):
-        return await bot.process_application_commands(interaction)
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if is_admin_user(interaction):
+            return True
 
-    uid = interaction.user.id
-    now = monotonic()
-    last = _last_use_by_user.get(uid, 0.0)
-    wait_for = THROTTLE_SECONDS - (now - last)
-
-    if wait_for > 0:
-        try:
-            await interaction.response.send_message(
-                f"⏳ You’re using commands too quickly! Please wait **{wait_for:.1f} seconds**.",
-                ephemeral=True
+        uid = interaction.user.id
+        now = monotonic()
+        wait_for = THROTTLE_SECONDS - (now - _last_use_by_user.get(uid, 0.0))
+        if wait_for > 0:
+            message = (
+                "⏳ You’re using commands too quickly! "
+                f"Please wait **{wait_for:.1f} seconds**."
             )
-        except discord.InteractionResponded:
-            await interaction.followup.send(
-                f"⏳ You’re using commands too quickly! Please wait **{wait_for:.1f} seconds**.",
-                ephemeral=True
-            )
-        return  # Don't run the command
+            if interaction.response.is_done():
+                await interaction.followup.send(message, ephemeral=True)
+            else:
+                await interaction.response.send_message(message, ephemeral=True)
+            return False
 
-    # Update cooldown and process command
-    _last_use_by_user[uid] = now
-    await bot.process_application_commands(interaction)
+        _last_use_by_user[uid] = now
+        return True
+
+
+intents = discord.Intents.default()
+intents.members = True
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents, tree_cls=QRLSCommandTree)
 
 # ================================================================
 # 🤖 BOT READY EVENT
 # ================================================================
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+    logger.info("Logged in as %s (ID: %s)", bot.user, bot.user.id)
     try:
         guild = discord.Object(id=GUILD_ID)
         bot.tree.copy_global_to(guild=guild)
         await bot.tree.sync(guild=guild)
-        print(f"🔄 Synced slash commands to guild {GUILD_ID}")
+        logger.info("Synced slash commands to guild %s", GUILD_ID)
     except Exception as e:
-        print(f"⚠️ Failed to sync commands: {e}")
+        logger.exception("Failed to sync commands: %s", e)
 
 # ================================================================
 # ⚠️ GLOBAL ERROR HANDLER
@@ -117,12 +125,23 @@ async def on_app_command_error(interaction: discord.Interaction, error):
             "⚠️ An unexpected error occurred while running this command.",
             ephemeral=True
         )
-    print(f"Command Error: {error!r}")
+    logger.error(
+        "Command error: %r",
+        error,
+        exc_info=(type(error), error, error.__traceback__),
+    )
 
 # ================================================================
 # 🧩 MAIN ENTRY POINT
 # ================================================================
 async def main():
+    if not TOKEN:
+        raise RuntimeError("DISCORD_TOKEN is required")
+    if not GUILD_ID:
+        raise RuntimeError("GUILD_ID is required and must be a non-zero integer")
+
+    # Runtime paths in existing cogs are relative to the service directory.
+    os.chdir(BASE_DIR)
     async with bot:
         for cog_name in [
             "cogs.startweek",
@@ -150,11 +169,11 @@ async def main():
         ]:
             try:
                 await bot.load_extension(cog_name)
-                print(f"✅ Cog '{cog_name.split('.')[-1]}' loaded successfully")
+                logger.info("Cog '%s' loaded successfully", cog_name.split(".")[-1])
             except Exception as e:
-                print(f"❌ Failed to load '{cog_name}': {e}")
+                logger.exception("Failed to load '%s': %s", cog_name, e)
 
-        print("🚀 Starting bot connection to Discord...")
+        logger.info("Starting bot connection to Discord")
         await bot.start(TOKEN)
 
 # ================================================================
