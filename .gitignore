@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+.pytest_cache/
+.ruff_cache/
 
 # Virtual environment
 .venv/
@@ -14,8 +16,14 @@ env/
 secrets/
 *.json
 
-# Team Info
-data/salaries.csv
+# Runtime data (created and updated by the bot)
+data/*
+!data/.gitkeep
+
+# This is a Python service; do not commit accidental Node installs.
+node_modules/
+package.json
+package-lock.json
 
 # VS Code settings (optional)
 .vscode/

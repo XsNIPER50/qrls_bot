@@ -8,6 +8,7 @@ import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
 from dotenv import load_dotenv
+from utils.runtime_data import atomic_json_dump
 
 load_dotenv()
 
@@ -54,8 +55,7 @@ def save_token_store(data: Dict[str, Any]) -> None:
     """
     ensure_data_dir()
     try:
-        with open(TOKEN_STORE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        atomic_json_dump(TOKEN_STORE_FILE, data, indent=2)
     except Exception as e:
         logger.error("Failed to write token store: %s", e, exc_info=True)
 
