@@ -6,8 +6,9 @@ import traceback
 import discord
 from discord import app_commands, Interaction
 from discord.ext import commands
-from utils.schedule import SCHEDULE
 from dotenv import load_dotenv
+from utils.scheduling import topic_with_series_id
+from utils.website_schedule import ScheduleAPIError, WebsiteScheduleClient
 
 load_dotenv()
 
@@ -27,6 +28,7 @@ logger.setLevel(logging.INFO)
 class StartWeek(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        self.website = WebsiteScheduleClient()
 
     @app_commands.command(
         name="startweek",
@@ -81,14 +83,21 @@ class StartWeek(commands.Cog):
                 await interaction.followup.send("🚫 You don’t have permission to use this command.", ephemeral=True)
                 return
 
-            # ---- Validate week number ----
+            # ---- Load the website schedule (source of truth) ----
             step = "SCHEDULE_LOOKUP"
-            if week_number not in SCHEDULE:
-                logger.warning("Week %s not in SCHEDULE. Keys=%s", week_number, list(SCHEDULE.keys()))
+            try:
+                website_schedule = await self.website.get_week(week_number)
+            except ScheduleAPIError as error:
+                logger.error("Website schedule lookup failed: status=%s message=%s", error.status, error.message)
+                await interaction.followup.send(
+                    f"❌ Could not load Week **{week_number}** from the website: {error.message}",
+                    ephemeral=True,
+                )
+                return
+            matches = website_schedule["series"]
+            if not matches:
                 await interaction.followup.send(f"❌ No schedule found for week **{week_number}**.", ephemeral=True)
                 return
-
-            matches = SCHEDULE[week_number]
             logger.info("Matches for week %s: %s", week_number, len(matches))
 
             # ---- Find/Create category ----
@@ -125,15 +134,25 @@ class StartWeek(commands.Cog):
 
             created_channels = []
 
-            for idx, (team_a, team_b) in enumerate(matches, start=1):
+            for idx, series in enumerate(matches, start=1):
+                series_id = str(series["id"])
+                team_a = str(series["team_one_name"])
+                team_b = str(series["team_two_name"])
                 step = "BUILD_CHANNEL_NAME"
                 channel_name = (
                     f"week{week_number}-{team_a.lower().replace(' ', '-')}-vs-{team_b.lower().replace(' ', '-')}"
                 )
 
                 step = "CHECK_EXISTING_CHANNEL"
-                if discord.utils.get(category.text_channels, name=channel_name):
-                    logger.info("Exists, skipping: %s", channel_name)
+                existing_channel = discord.utils.get(category.text_channels, name=channel_name)
+                if existing_channel:
+                    step = "UPDATE_EXISTING_CHANNEL_TOPIC"
+                    expected_topic = topic_with_series_id(existing_channel.topic, series_id)
+                    if existing_channel.topic != expected_topic:
+                        await existing_channel.edit(topic=expected_topic, reason="Link QRLS website schedule series")
+                    step = "LINK_EXISTING_CHANNEL"
+                    await self.website.link_channel(series_id, existing_channel.id)
+                    logger.info("Exists and linked: %s series=%s", channel_name, series_id)
                     continue
 
                 step = "BUILD_OVERWRITES"
@@ -169,8 +188,11 @@ class StartWeek(commands.Cog):
                     name=channel_name,
                     category=category,
                     overwrites=overwrites,
+                    topic=topic_with_series_id(None, series_id),
                     reason=f"Week {week_number} matchup setup"
                 )
+                step = "LINK_CHANNEL"
+                await self.website.link_channel(series_id, new_channel.id)
                 created_channels.append(new_channel.name)
 
                 # ---- First message: ping captains + BOTH teams ----

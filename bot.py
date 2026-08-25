@@ -151,8 +151,8 @@ async def main():
             "cogs.profile",
             "cogs.teaminfo",
             "cogs.help",            # List available commands and a short description
-            "cogs.propose",         # Propose Match Day and Time
-            "cogs.confirm",         # Confirm proposed Match Day and Time
+            "cogs.scheduling_propose", # Propose Match Day and Time via the website
+            "cogs.scheduling_confirm", # Confirm proposed Match Day and Time via the website
             "cogs.refresh",         # Refreshes the .csv to match the Google Sheet
             # "cogs.transactions"
             "cogs.add",             # Adds player into roster spot
