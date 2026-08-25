@@ -8,8 +8,8 @@ from discord import Interaction, app_commands
 from discord.ext import commands
 
 from utils.runtime_data import atomic_json_dump
-from utils.scheduling import format_schedule_datetime, parse_schedule_datetime, series_id_from_topic
-from utils.team_info import TEAM_INFO
+from utils.schedule_announcements import deliver_confirmed_announcement
+from utils.scheduling import parse_schedule_datetime, series_id_from_topic
 from utils.website_schedule import ScheduleAPIError, WebsiteScheduleClient
 
 ADMINS_ROLE_ID = int(os.getenv("ADMINS_ROLE_ID", 0))
@@ -17,8 +17,6 @@ CAPTAINS_ROLE_ID = int(os.getenv("CAPTAINS_ROLE_ID", 0))
 SCHED_CATEGORY_ID = int(os.getenv("SCHED_CATEGORY_ID", 0))
 PROPOSALS_FILE = os.path.join("data", "proposals.json")
 SCHED_CATEGORY_NAME = "Scheduling Channel"
-SCHED_RESULTS_CHANNEL = "💥・scheduling"
-SCHEDULED_MATCHES_CHANNEL = "📜・scheduled-matches"
 
 
 def load_proposals() -> dict:
@@ -126,59 +124,17 @@ class Confirm(commands.Cog):
             return
 
         proposer_id = proposal["proposer_id"]
-        proposer = interaction.guild.get_member(proposer_id) if proposer_id else None
-        proposer_mention = proposer.mention if proposer else f"<@{proposer_id}>"
         team_a, team_b = proposal["team_one_name"], proposal["team_two_name"]
-        display = format_schedule_datetime(proposed_at)
-
-        if interaction.user.guild_permissions.administrator:
-            role_label = "Admin"
-        elif CAPTAINS_ROLE_ID and discord.utils.get(interaction.user.roles, id=CAPTAINS_ROLE_ID):
-            role_label = "Captain"
-        else:
-            role_label = "Member"
-
-        embed = discord.Embed(
-            title="✅ Match Time Confirmed",
-            description=f"**{display}** was proposed by {proposer_mention} and confirmed by {interaction.user.mention}.",
-            color=discord.Color.green(),
+        await deliver_confirmed_announcement(
+            interaction.channel,
+            actor_id=interaction.user.id,
+            proposer_id=proposer_id,
+            scheduled_at=proposed_at,
+            team_a=team_a,
+            team_b=team_b,
+            captains_role_id=CAPTAINS_ROLE_ID,
+            strict_delivery=False,
         )
-        embed.add_field(name="🏆 Matchup", value=f"**{team_a}** vs **{team_b}**", inline=False)
-        embed.add_field(name="🕒 Time", value=display, inline=True)
-        embed.set_footer(text=f"Confirmed by {interaction.user.display_name} ({role_label})")
-
-        allowed = discord.AllowedMentions(roles=True, users=True, everyone=False)
-        captains = interaction.guild.get_role(CAPTAINS_ROLE_ID) if CAPTAINS_ROLE_ID else None
-        await interaction.followup.send(
-            content=f"{captains.mention} — A match time has been confirmed." if captains else "@Captains — A match time has been confirmed.",
-            allowed_mentions=allowed,
-            ephemeral=False,
-        )
-        await interaction.followup.send(embed=embed, allowed_mentions=allowed, ephemeral=False)
-
-        schedule_channel = discord.utils.get(interaction.guild.text_channels, name=SCHED_RESULTS_CHANNEL)
-        matches_channel = discord.utils.get(interaction.guild.text_channels, name=SCHEDULED_MATCHES_CHANNEL)
-        role_a = discord.utils.get(interaction.guild.roles, name=team_a)
-        role_b = discord.utils.get(interaction.guild.roles, name=team_b)
-        mention_a = role_a.mention if role_a else f"@{team_a}"
-        mention_b = role_b.mention if role_b else f"@{team_b}"
-        emoji_a_name = TEAM_INFO.get(team_a, {}).get("emoji", "")
-        emoji_b_name = TEAM_INFO.get(team_b, {}).get("emoji", "")
-        emoji_a = discord.utils.get(interaction.guild.emojis, name=emoji_a_name)
-        emoji_b = discord.utils.get(interaction.guild.emojis, name=emoji_b_name)
-        emoji_a_text = str(emoji_a) if emoji_a else (f":{emoji_a_name}:" if emoji_a_name else "")
-        emoji_b_text = str(emoji_b) if emoji_b else (f":{emoji_b_name}:" if emoji_b_name else "")
-        message = f"{emoji_a_text} {mention_a} vs {mention_b} {emoji_b_text} — {display}"
-
-        for channel in (schedule_channel, matches_channel):
-            if channel:
-                sent = await channel.send(message, allowed_mentions=allowed)
-                if channel.name == SCHEDULED_MATCHES_CHANNEL:
-                    try:
-                        await sent.add_reaction("🎙️")
-                        await sent.add_reaction("🎥")
-                    except discord.HTTPException:
-                        pass
 
         del proposals[channel_id]
         save_proposals(proposals)

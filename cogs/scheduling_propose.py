@@ -8,6 +8,7 @@ from discord import Interaction, app_commands
 from discord.ext import commands
 
 from utils.runtime_data import atomic_json_dump
+from utils.schedule_announcements import deliver_proposed_announcement
 from utils.scheduling import format_schedule_datetime, parse_schedule_datetime, series_id_from_topic, week_from_channel_name
 from utils.website_schedule import ScheduleAPIError, WebsiteScheduleClient
 
@@ -98,18 +99,12 @@ class ProposalApprovalView(discord.ui.View):
         }
         save_proposals(proposals)
 
-        allowed = discord.AllowedMentions(roles=True, users=True, everyone=False)
-        role = interaction.guild.get_role(CAPTAINS_ROLE_ID) if interaction.guild and CAPTAINS_ROLE_ID else None
-        await interaction.followup.send(
-            content=f"{role.mention} — A match time has been proposed." if role else "@Captains — A match time has been proposed.",
-            allowed_mentions=allowed,
+        await deliver_proposed_announcement(
+            interaction.channel,
+            actor_id=interaction.user.id,
+            scheduled_at=self.scheduled_at,
+            captains_role_id=CAPTAINS_ROLE_ID,
         )
-        embed = discord.Embed(
-            title="📌 Proposed Match Time",
-            description=f"**{interaction.user.mention}** proposed:\n**{self.display}**",
-            color=discord.Color.gold(),
-        )
-        await interaction.followup.send(embed=embed, allowed_mentions=allowed)
         self.stop()
 
     @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.red)

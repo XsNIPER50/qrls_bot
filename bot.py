@@ -153,6 +153,7 @@ async def main():
             "cogs.help",            # List available commands and a short description
             "cogs.scheduling_propose", # Propose Match Day and Time via the website
             "cogs.scheduling_confirm", # Confirm proposed Match Day and Time via the website
+            "cogs.schedule_notifications", # Deliver website-admin schedule announcements
             "cogs.refresh",         # Refreshes the .csv to match the Google Sheet
             # "cogs.transactions"
             "cogs.add",             # Adds player into roster spot

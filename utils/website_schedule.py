@@ -67,6 +67,31 @@ class WebsiteScheduleClient:
             raise ScheduleAPIError("Website scheduling returned incomplete week data.")
         return body
 
+    async def claim_notification(self) -> dict | None:
+        body = await self._request("GET", params={"claim": "notification"})
+        notification = body.get("notification")
+        if notification is not None and not isinstance(notification, dict):
+            raise ScheduleAPIError("Website scheduling returned an invalid notification.")
+        return notification
+
+    async def complete_notification(self, notification_id: str) -> None:
+        body = await self._request("POST", json={
+            "action": "complete_notification",
+            "notificationId": notification_id,
+        })
+        if body.get("ok") is not True:
+            raise ScheduleAPIError("Website did not acknowledge the notification completion.")
+
+    async def fail_notification(self, notification_id: str, error: str) -> None:
+        safe_error = " ".join(error.split())[:500] or "Discord delivery failed."
+        body = await self._request("POST", json={
+            "action": "fail_notification",
+            "notificationId": notification_id,
+            "error": safe_error,
+        })
+        if body.get("ok") is not True:
+            raise ScheduleAPIError("Website did not acknowledge the notification failure.")
+
     async def link_channel(self, series_id: str, channel_id: int) -> dict:
         return await self._request("POST", json={
             "action": "link_channel",

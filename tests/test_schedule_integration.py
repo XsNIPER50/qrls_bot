@@ -70,6 +70,29 @@ class WebsiteScheduleClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["params"], {"week": "1"})
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-secret")
 
+    async def test_notification_claim_and_completion_contract(self):
+        notification = {"id": SERIES_ID, "event_type": "proposed"}
+        session = FakeSession([
+            FakeResponse(200, {"notification": notification}),
+            FakeResponse(200, {"ok": True}),
+        ])
+        client = WebsiteScheduleClient(session=session)
+        self.assertEqual(await client.claim_notification(), notification)
+        await client.complete_notification(SERIES_ID)
+        self.assertEqual(session.requests[0][2]["params"], {"claim": "notification"})
+        self.assertEqual(session.requests[1][2]["json"], {
+            "action": "complete_notification",
+            "notificationId": SERIES_ID,
+        })
+
+    async def test_failure_report_is_sanitized_and_bounded(self):
+        session = FakeSession([FakeResponse(200, {"ok": True})])
+        await WebsiteScheduleClient(session=session).fail_notification(SERIES_ID, "line one\n" + "x" * 600)
+        payload = session.requests[0][2]["json"]
+        self.assertEqual(payload["action"], "fail_notification")
+        self.assertNotIn("\n", payload["error"])
+        self.assertLessEqual(len(payload["error"]), 500)
+
     async def test_update_time_sends_optimistic_version_and_offset(self):
         session = FakeSession([FakeResponse(200, {"series": {"id": SERIES_ID, "version": 8}})])
         when = datetime(2026, 9, 1, 20, 30, tzinfo=ZoneInfo("America/New_York"))
