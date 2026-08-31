@@ -156,10 +156,8 @@ async def main():
             "cogs.schedule_notifications", # Deliver website-admin schedule announcements
             "cogs.refresh",         # Refreshes the .csv to match the Google Sheet
             # "cogs.transactions"
-            "cogs.add",             # Adds player into roster spot
-            "cogs.drop",            # Removed player from roster spot
+            "cogs.website_roster",  # Supabase-authoritative add/drop/trade workflows
             "cogs.sub",             # Applies Team role for certain duration
-            "cogs.trade",           # Adds opposing captain to chat and initiates the trade
             "cogs.waiverclaim",     # Adds waiver claims to be automated, adding/removing/and putting on a team
             "cogs.unretire",        
             "cogs.retire",          
