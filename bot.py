@@ -154,6 +154,7 @@ async def main():
             "cogs.scheduling_propose", # Propose Match Day and Time via the website
             "cogs.scheduling_confirm", # Confirm proposed Match Day and Time via the website
             "cogs.schedule_notifications", # Deliver website-admin schedule announcements
+            "cogs.role_sync",        # Apply website-authored Discord role changes
             "cogs.refresh",         # Refreshes the .csv to match the Google Sheet
             # "cogs.transactions"
             "cogs.website_roster",  # Supabase-authoritative add/drop/trade workflows
