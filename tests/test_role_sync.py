@@ -192,6 +192,66 @@ class RoleSyncPollerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events, [("remove", 10), ("add", 20)])
         guild.fetch_member.assert_not_awaited()
 
+    async def test_updates_optional_nickname(self):
+        member = SimpleNamespace(roles=[], edit=AsyncMock())
+        guild = SimpleNamespace(
+            get_member=lambda member_id: member,
+            fetch_member=AsyncMock(),
+            get_role=lambda role_id: None,
+        )
+        cog = RoleSync(FakeBot(guild))
+        cog.guild_id = 999
+        job = {"id": JOB_ID, "discord_user_id": "123", "nickname": "Approved Player"}
+
+        await cog.apply(job)
+
+        member.edit.assert_awaited_once_with(
+            nick="Approved Player",
+            reason="QRLS approved player name change",
+        )
+
+    async def test_absent_or_null_nickname_does_not_edit_member(self):
+        for job in (
+            {"id": JOB_ID, "discord_user_id": "123"},
+            {"id": JOB_ID, "discord_user_id": "123", "nickname": None},
+        ):
+            with self.subTest(job=job):
+                member = SimpleNamespace(roles=[], edit=AsyncMock())
+                guild = SimpleNamespace(
+                    get_member=lambda member_id: member,
+                    fetch_member=AsyncMock(),
+                    get_role=lambda role_id: None,
+                )
+                cog = RoleSync(FakeBot(guild))
+                cog.guild_id = 999
+
+                await cog.apply(job)
+
+                member.edit.assert_not_awaited()
+
+    async def test_rejects_nickname_over_discord_limit_before_role_changes(self):
+        member = SimpleNamespace(roles=[], add_roles=AsyncMock(), edit=AsyncMock())
+        added = SimpleNamespace(id=20)
+        guild = SimpleNamespace(
+            get_member=lambda member_id: member,
+            fetch_member=AsyncMock(),
+            get_role=lambda role_id: added,
+        )
+        cog = RoleSync(FakeBot(guild))
+        cog.guild_id = 999
+        job = {
+            "id": JOB_ID,
+            "discord_user_id": "123",
+            "add_role_id": "20",
+            "nickname": "x" * 33,
+        }
+
+        with self.assertRaisesRegex(ValueError, "32-character limit"):
+            await cog.apply(job)
+
+        member.add_roles.assert_not_awaited()
+        member.edit.assert_not_awaited()
+
 
 if __name__ == "__main__":
     unittest.main()

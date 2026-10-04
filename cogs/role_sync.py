@@ -63,8 +63,14 @@ class RoleSync(commands.Cog):
 
         remove_value = job.get("remove_role_id")
         add_value = job.get("add_role_id")
+        nickname = job.get("nickname")
         remove_id = int(remove_value) if remove_value else None
         add_id = int(add_value) if add_value else None
+        if nickname is not None:
+            if not isinstance(nickname, str):
+                raise ValueError("Role-sync nickname must be a string or null.")
+            if len(nickname) > 32:
+                raise ValueError("Role-sync nickname exceeds Discord's 32-character limit.")
 
         if remove_id:
             remove_role = guild.get_role(remove_id)
@@ -79,6 +85,9 @@ class RoleSync(commands.Cog):
                 raise RuntimeError(f"Discord role {add_id} was not found.")
             if add_role not in member.roles:
                 await member.add_roles(add_role, reason="QRLS website role-sync job")
+
+        if nickname is not None:
+            await member.edit(nick=nickname, reason="QRLS approved player name change")
 
     async def _poll_once(self) -> None:
         if self._pending_completion:
